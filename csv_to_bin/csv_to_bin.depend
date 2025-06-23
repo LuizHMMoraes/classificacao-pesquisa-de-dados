@@ -1,0 +1,6 @@
+# depslib dependency file v1.0
+1750537582 source:/home/luiz/Desktop/CPD/csv_to_bin/main.c
+	<stdio.h>
+	<stdlib.h>
+	<string.h>
+

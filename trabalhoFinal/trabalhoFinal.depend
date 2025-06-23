@@ -1,0 +1,12 @@
+# depslib dependency file v1.0
+1750616854 source:/home/luiz/Desktop/CPD/trabalhoFinal/bplus.c
+	"bplus.h"
+
+1750616821 /home/luiz/Desktop/CPD/trabalhoFinal/bplus.h
+	"disaster.h"
+
+1750616798 /home/luiz/Desktop/CPD/trabalhoFinal/disaster.h
+	<stdio.h>
+	<stdlib.h>
+	<string.h>
+
