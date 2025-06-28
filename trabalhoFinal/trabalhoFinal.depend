@@ -1,12 +1,40 @@
 # depslib dependency file v1.0
-1750616854 source:/home/luiz/Desktop/CPD/trabalhoFinal/bplus.c
+1751118103 source:/home/luiz/Desktop/CPD/trabalhoFinal/bplus.c
 	"bplus.h"
+	<stdio.h>
+	<stdlib.h>
+	<string.h>
 
-1750616821 /home/luiz/Desktop/CPD/trabalhoFinal/bplus.h
-	"disaster.h"
+1751118132 /home/luiz/Desktop/CPD/trabalhoFinal/bplus.h
 
 1750616798 /home/luiz/Desktop/CPD/trabalhoFinal/disaster.h
 	<stdio.h>
 	<stdlib.h>
 	<string.h>
+
+1751118034 source:/home/luiz/Desktop/CPD/trabalhoFinal/disaster_star_schema.c
+	"disaster_star_schema.h"
+	<stdio.h>
+	<stdlib.h>
+	<string.h>
+
+1751026631 /home/luiz/Desktop/CPD/trabalhoFinal/disaster_star_schema.h
+	<stdio.h>
+	<stdlib.h>
+	<string.h>
+
+1751029057 source:/home/luiz/Desktop/CPD/trabalhoFinal/main.c
+	"disaster.h"
+	"disaster_star_schema.h"
+	"bplus.h"
+	"trie.h"
+
+1751118162 /home/luiz/Desktop/CPD/trabalhoFinal/trie.h
+
+1751118149 source:/home/luiz/Desktop/CPD/trabalhoFinal/trie.c
+	"trie.h"
+	<stdio.h>
+	<stdlib.h>
+	<string.h>
+	<ctype.h>
 
