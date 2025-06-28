@@ -23,7 +23,14 @@
 	<stdlib.h>
 	<string.h>
 
-1751029057 source:/home/luiz/Desktop/CPD/trabalhoFinal/main.c
+1751140352 source:/home/luiz/Desktop/CPD/trabalhoFinal/main.c
+	<raylib.h>
+	<stdio.h>
+	<stdlib.h>
+	<string.h>
+	<math.h>
+	<stdbool.h>
+	<time.h>
 	"disaster.h"
 	"disaster_star_schema.h"
 	"bplus.h"
@@ -37,4 +44,24 @@
 	<stdlib.h>
 	<string.h>
 	<ctype.h>
+
+1751124359 source:/home/luiz/Desktop/CPD/trabalhoFinal/disaster_gui.c
+	<raylib.h>
+	<stdio.h>
+	<stdlib.h>
+	<string.h>
+	<math.h>
+
+1751125233 /home/luiz/Desktop/CPD/trabalhoFinal/disaster_gui.h
+	<raylib.h>
+	<stdio.h>
+	<stdlib.h>
+	<string.h>
+	<math.h>
+	<stdbool.h>
+	<time.h>
+
+1721080461 /home/luiz/raylib/src/raylib.h
+	<stdarg.h>
+	<stdbool.h>
 
