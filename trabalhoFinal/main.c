@@ -5,6 +5,7 @@
 #include <math.h>
 #include <stdbool.h>
 #include <time.h>
+#include <ctype.h>
 
 //Headers específicos do projeto
 #include "disaster.h"
@@ -50,7 +51,6 @@ typedef struct {
     int disaster_count;
 } CountryStats;
 
-// Estrutura para interface
 typedef struct {
     // Dados
     DisasterRecord *disasters;
@@ -70,8 +70,12 @@ typedef struct {
     int start_year;
     int end_year;
 
+    //Campo de texto para países
+    char country_input[50];
+    bool country_input_active;
+
     // Estados da interface
-    bool country_dropdown_open;
+    bool country_dropout_open;
     bool type_dropdown_open;
     int scroll_offset;
     int table_scroll_y;
@@ -122,9 +126,23 @@ void ApplyFilters(DisasterGUI *gui) {
         DisasterRecord *record = &gui->disasters[i];
         bool include = true;
 
-        // Filtro por país
-        if (gui->selected_country > 0) {
-            if (strcmp(record->country, gui->countries[gui->selected_country]) != 0) {
+        // Filtro por país usando input de texto
+        if (strlen(gui->country_input) > 0) {
+            // Busca case-insensitive
+            char country_lower[50], input_lower[50];
+            strcpy(country_lower, record->country);
+            strcpy(input_lower, gui->country_input);
+
+            // Converter para minúsculas
+            for (int j = 0; country_lower[j]; j++) {
+                country_lower[j] = tolower(country_lower[j]);
+            }
+            for (int j = 0; input_lower[j]; j++) {
+                input_lower[j] = tolower(input_lower[j]);
+            }
+
+            // Verificar se contém o texto
+            if (strstr(country_lower, input_lower) == NULL) {
                 include = false;
             }
         }
@@ -150,12 +168,11 @@ void ApplyFilters(DisasterGUI *gui) {
         }
     }
 
-    // Calcular estatísticas por país
+    // Calcular estatísticas por país (código existente mantido)
     gui->country_stats_count = 0;
     for (int i = 0; i < gui->filtered_count && gui->country_stats_count < MAX_COUNTRIES; i++) {
         DisasterRecord *record = &gui->filtered_disasters[i];
 
-        // Procurar se o país já existe nas estatísticas
         int country_idx = -1;
         for (int j = 0; j < gui->country_stats_count; j++) {
             if (strcmp(gui->country_stats[j].country, record->country) == 0) {
@@ -165,13 +182,11 @@ void ApplyFilters(DisasterGUI *gui) {
         }
 
         if (country_idx == -1) {
-            // Novo país
             strcpy(gui->country_stats[gui->country_stats_count].country, record->country);
             gui->country_stats[gui->country_stats_count].total_affected = record->total_affected;
             gui->country_stats[gui->country_stats_count].disaster_count = 1;
             gui->country_stats_count++;
         } else {
-            // País existente
             gui->country_stats[country_idx].total_affected += record->total_affected;
             gui->country_stats[country_idx].disaster_count++;
         }
@@ -179,6 +194,7 @@ void ApplyFilters(DisasterGUI *gui) {
 }
 
 bool DrawDropdown(Rectangle bounds, const char *label, char options[][50], int option_count, int *selected, bool *open);
+bool DrawTextInput(Rectangle bounds, const char *label, char *text, int max_length, bool *is_active);
 
 // Desenhar cabeçalho da aplicação
 void DrawApplicationHeader(Rectangle bounds) {
@@ -192,17 +208,14 @@ void DrawFilterControls(Rectangle bounds, DisasterGUI *gui, bool *filters_change
     DrawRectangleRec(bounds, PANEL_COLOR);
     DrawRectangleLinesEx(bounds, 1, BORDER_COLOR);
 
-    // Dropdown para países
-    Rectangle country_rect = {bounds.x + 20, bounds.y + 20, 300, 30};
-    const char *country_text = gui->countries[gui->selected_country];
-
-    if (DrawDropdown(country_rect, country_text, gui->countries,
-                          gui->country_count, &gui->selected_country, &gui->country_dropdown_open)) {
+    // Input de texto para países
+    Rectangle country_input_rect = {bounds.x + 20, bounds.y + 40, 300, 30};
+    if (DrawTextInput(country_input_rect, "Countries:", gui->country_input, 50, &gui->country_input_active)) {
         *filters_changed = true;
     }
 
-    // Dropdown para tipos de desastre
-    Rectangle type_rect = {bounds.x + 240, bounds.y + 20, 300, 30};
+    // Dropdown para tipos de desastre (movido para baixo)
+    Rectangle type_rect = {bounds.x + 20, bounds.y + 90, 300, 30};
     const char *type_text = gui->disaster_types[gui->selected_disaster_type];
 
     if (DrawDropdown(type_rect, type_text, gui->disaster_types,
@@ -210,12 +223,12 @@ void DrawFilterControls(Rectangle bounds, DisasterGUI *gui, bool *filters_change
         *filters_changed = true;
     }
 
-    // Controles de ano
-    DrawText("Start Year:", bounds.x + 20, bounds.y + 70, 14, TEXT_COLOR);
-    DrawText(TextFormat("%d", gui->start_year), bounds.x + 100, bounds.y + 70, 14, TEXT_COLOR);
+    // Controles de ano (ao lado do input de países)
+    DrawText("Start Year:", bounds.x + 350, bounds.y + 20, 14, TEXT_COLOR);
+    DrawText(TextFormat("%d", gui->start_year), bounds.x + 350, bounds.y + 45, 14, TEXT_COLOR);
 
-    DrawText("End Year:", bounds.x + 240, bounds.y + 70, 14, TEXT_COLOR);
-    DrawText(TextFormat("%d", gui->end_year), bounds.x + 320, bounds.y + 70, 14, TEXT_COLOR);
+    DrawText("End Year:", bounds.x + 450, bounds.y + 20, 14, TEXT_COLOR);
+    DrawText(TextFormat("%d", gui->end_year), bounds.x + 450, bounds.y + 45, 14, TEXT_COLOR);
 }
 
 // Desenhar gráfico de barras
@@ -314,7 +327,7 @@ void DrawDetailedStatsPanel(Rectangle bounds, DisasterGUI *gui) {
              bounds.x + 20, bounds.y + y_offset, 14, TEXT_COLOR);
 }
 
-// Desenhar tabela de dados
+// Desenhar tabela de dados expandida
 void DrawDataTable(Rectangle bounds, DisasterRecord *records, int count, int *scroll_y) {
     DrawRectangleRec(bounds, PANEL_COLOR);
     DrawRectangleLinesEx(bounds, 1, BORDER_COLOR);
@@ -326,15 +339,34 @@ void DrawDataTable(Rectangle bounds, DisasterRecord *records, int count, int *sc
         return;
     }
 
-    // Cabeçalho da tabela
+    // Definir larguras das colunas para ocupar toda a tela
+    float col_widths[] = {220, 140, 120, 80, 100, 80, 80, 85, 85, 80, 100, 100, 100, 120, 80, 100}; // 16 colunas
+    float total_width = 0;
+    for (int i = 0; i < 16; i++) {
+        total_width += col_widths[i];
+    }
+
+    // Ajustar proporcionalmente para ocupar toda largura
+    float scale_factor = (bounds.width - 20) / total_width;
+    for (int i = 0; i < 16; i++) {
+        col_widths[i] *= scale_factor;
+    }
+
+    // Cabeçalho da tabela expandido
     Rectangle header_rect = {bounds.x, bounds.y + 35, bounds.width, 25};
     DrawRectangleRec(header_rect, (Color){240, 240, 245, 255});
-    DrawText("Country", bounds.x + 10, bounds.y + 40, 12, TEXT_COLOR);
-    DrawText("Disaster Type", bounds.x + 150, bounds.y + 40, 12, TEXT_COLOR);
-    DrawText("Year", bounds.x + 300, bounds.y + 40, 12, TEXT_COLOR);
-    DrawText("Deaths", bounds.x + 350, bounds.y + 40, 12, TEXT_COLOR);
-    DrawText("Affected", bounds.x + 420, bounds.y + 40, 12, TEXT_COLOR);
-    DrawText("Damage", bounds.x + 520, bounds.y + 40, 12, TEXT_COLOR);
+
+    float x_pos = bounds.x + 5;
+    const char *headers[] = {
+        "Country", "Disaster Type", "Disaster Group", "Year", "Month", "Day",
+        "End Year", "End Month", "End Day", "Deaths", "Affected", "Injured",
+        "Homeless", "Total Affected", "Damage", "Adjusted Damage"
+    };
+
+    for (int i = 0; i < 16; i++) {
+        DrawText(headers[i], x_pos, bounds.y + 40, 11, TEXT_COLOR);
+        x_pos += col_widths[i];
+    }
 
     // Scroll com mouse wheel
     float wheel = GetMouseWheelMove();
@@ -356,32 +388,80 @@ void DrawDataTable(Rectangle bounds, DisasterRecord *records, int count, int *sc
         Rectangle row_rect = {bounds.x, y_pos - 2, bounds.width, 20};
         DrawRectangleRec(row_rect, row_color);
 
-        DrawText(record->country, bounds.x + 10, y_pos, 11, TEXT_COLOR);
-        DrawText(record->disaster_type, bounds.x + 150, y_pos, 11, TEXT_COLOR);
-        DrawText(TextFormat("%d", record->start_year), bounds.x + 300, y_pos, 11, TEXT_COLOR);
-        DrawText(TextFormat("%d", record->total_deaths), bounds.x + 350, y_pos, 11, TEXT_COLOR);
+        x_pos = bounds.x + 5;
+
+        // Desenhar cada coluna
+        DrawText(record->country, x_pos, y_pos, 10, TEXT_COLOR);
+        x_pos += col_widths[0];
+
+        DrawText(record->disaster_type, x_pos, y_pos, 10, TEXT_COLOR);
+        x_pos += col_widths[1];
+
+        DrawText("Natural", x_pos, y_pos, 10, TEXT_COLOR); // Disaster Group (placeholder)
+        x_pos += col_widths[2];
+
+        DrawText(TextFormat("%d", record->start_year), x_pos, y_pos, 10, TEXT_COLOR);
+        x_pos += col_widths[3];
+
+        DrawText(TextFormat("%d", record->start_month), x_pos, y_pos, 10, TEXT_COLOR);
+        x_pos += col_widths[4];
+
+        DrawText(TextFormat("%d", record->start_day), x_pos, y_pos, 10, TEXT_COLOR);
+        x_pos += col_widths[5];
+
+        DrawText(TextFormat("%d", record->end_year), x_pos, y_pos, 10, TEXT_COLOR);
+        x_pos += col_widths[6];
+
+        DrawText(TextFormat("%d", record->end_month), x_pos, y_pos, 10, TEXT_COLOR);
+        x_pos += col_widths[7];
+
+        DrawText(TextFormat("%d", record->end_day), x_pos, y_pos, 10, TEXT_COLOR);
+        x_pos += col_widths[8];
+
+        DrawText(TextFormat("%d", record->total_deaths), x_pos, y_pos, 10, TEXT_COLOR);
+        x_pos += col_widths[9];
 
         // Formatar números grandes
         if (record->total_affected >= 1000000) {
-            DrawText(TextFormat("%.1fM", record->total_affected / 1000000.0),
-                     bounds.x + 420, y_pos, 11, TEXT_COLOR);
+            DrawText(TextFormat("%.1fM", record->total_affected / 1000000.0), x_pos, y_pos, 10, TEXT_COLOR);
         } else if (record->total_affected >= 1000) {
-            DrawText(TextFormat("%.1fK", record->total_affected / 1000.0),
-                     bounds.x + 420, y_pos, 11, TEXT_COLOR);
+            DrawText(TextFormat("%.1fK", record->total_affected / 1000.0), x_pos, y_pos, 10, TEXT_COLOR);
         } else {
-            DrawText(TextFormat("%lld", record->total_affected),
-                     bounds.x + 420, y_pos, 11, TEXT_COLOR);
+            DrawText(TextFormat("%lld", record->total_affected), x_pos, y_pos, 10, TEXT_COLOR);
         }
+        x_pos += col_widths[10];
+
+        DrawText("0", x_pos, y_pos, 10, TEXT_COLOR); // Injured (placeholder)
+        x_pos += col_widths[11];
+
+        DrawText("0", x_pos, y_pos, 10, TEXT_COLOR); // Homeless (placeholder)
+        x_pos += col_widths[12];
+
+        if (record->total_affected >= 1000000) {
+            DrawText(TextFormat("%.1fM", record->total_affected / 1000000.0), x_pos, y_pos, 10, TEXT_COLOR);
+        } else if (record->total_affected >= 1000) {
+            DrawText(TextFormat("%.1fK", record->total_affected / 1000.0), x_pos, y_pos, 10, TEXT_COLOR);
+        } else {
+            DrawText(TextFormat("%lld", record->total_affected), x_pos, y_pos, 10, TEXT_COLOR);
+        }
+        x_pos += col_widths[13];
 
         if (record->total_damage >= 1000000) {
-            DrawText(TextFormat("$%.1fM", record->total_damage / 1000000.0),
-                     bounds.x + 520, y_pos, 11, TEXT_COLOR);
+            DrawText(TextFormat("$%.1fM", record->total_damage / 1000000.0), x_pos, y_pos, 10, TEXT_COLOR);
         } else if (record->total_damage >= 1000) {
-            DrawText(TextFormat("$%.1fK", record->total_damage / 1000.0),
-                     bounds.x + 520, y_pos, 11, TEXT_COLOR);
+            DrawText(TextFormat("$%.1fK", record->total_damage / 1000.0), x_pos, y_pos, 10, TEXT_COLOR);
         } else {
-            DrawText(TextFormat("$%lld", record->total_damage),
-                     bounds.x + 520, y_pos, 11, TEXT_COLOR);
+            DrawText(TextFormat("$%lld", record->total_damage), x_pos, y_pos, 10, TEXT_COLOR);
+        }
+        x_pos += col_widths[14];
+
+        // Adjusted Damage (mesmo valor por enquanto)
+        if (record->total_damage >= 1000000) {
+            DrawText(TextFormat("$%.1fM", record->total_damage / 1000000.0), x_pos, y_pos, 10, TEXT_COLOR);
+        } else if (record->total_damage >= 1000) {
+            DrawText(TextFormat("$%.1fK", record->total_damage / 1000.0), x_pos, y_pos, 10, TEXT_COLOR);
+        } else {
+            DrawText(TextFormat("$%lld", record->total_damage), x_pos, y_pos, 10, TEXT_COLOR);
         }
     }
 }
@@ -389,13 +469,6 @@ void DrawDataTable(Rectangle bounds, DisasterRecord *records, int count, int *sc
 // Função para desenhar dropdown
 bool DrawDropdown(Rectangle bounds, const char *text, char items[][50],
                        int item_count, int *selected_index, bool *is_open) {
-
-//**DEBUG ITENS NO DROPDOWN:
-    printf("DrawDropdown called with item_count: %d\n", item_count);
-    if (item_count > 0) {
-        printf("First item: '%s'\n", items[0]);
-        printf("Last item: '%s'\n", items[item_count-1]);
-    }
 
     bool pressed = false;
     Vector2 mouse_pos = GetMousePosition();
@@ -442,6 +515,63 @@ bool DrawDropdown(Rectangle bounds, const char *text, char items[][50],
     }
 
     return pressed;
+}
+
+// Função para desenhar input de texto
+bool DrawTextInput(Rectangle bounds, const char *label, char *text, int max_length, bool *is_active) {
+    Vector2 mouse_pos = GetMousePosition();
+    bool text_changed = false;
+
+    // Verificar clique para ativar/desativar
+    if (CheckCollisionPointRec(mouse_pos, bounds) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+        *is_active = true;
+    } else if (!CheckCollisionPointRec(mouse_pos, bounds) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+        *is_active = false;
+    }
+
+    // Cor do campo baseada no estado
+    Color input_color = *is_active ? (Color){255, 255, 255, 255} : (Color){248, 248, 250, 255};
+    Color border_color = *is_active ? PRIMARY_COLOR : BORDER_COLOR;
+
+    // Desenhar campo
+    DrawRectangleRec(bounds, input_color);
+    DrawRectangleLinesEx(bounds, 2, border_color);
+
+    // Desenhar label acima do campo
+    DrawText(label, bounds.x, bounds.y - 20, 14, TEXT_COLOR);
+
+    // Capturar entrada de texto se ativo
+    if (*is_active) {
+        int key = GetCharPressed();
+        while (key > 0) {
+            if (key >= 32 && key <= 125 && strlen(text) < max_length - 1) {
+                text[strlen(text) + 1] = '\0';
+                text[strlen(text)] = (char)key;
+                text_changed = true;
+            }
+            key = GetCharPressed();
+        }
+
+        // Backspace
+        if (IsKeyPressed(KEY_BACKSPACE) && strlen(text) > 0) {
+            text[strlen(text) - 1] = '\0';
+            text_changed = true;
+        }
+    }
+
+    // Mostrar texto ou placeholder
+    const char *display_text = (strlen(text) > 0) ? text : "All Countries";
+    Color text_color = (strlen(text) > 0) ? TEXT_COLOR : (Color){150, 150, 150, 255};
+
+    DrawText(display_text, bounds.x + 8, bounds.y + 8, 14, text_color);
+
+    // Cursor piscante se ativo
+    if (*is_active && ((int)(GetTime() * 2) % 2)) {
+        int text_width = MeasureText(text, 14);
+        DrawText("|", bounds.x + 8 + text_width, bounds.y + 8, 14, TEXT_COLOR);
+    }
+
+    return text_changed;
 }
 
 // Função para converter dados do esquema estrela para GUI
@@ -576,10 +706,12 @@ for (int i = 0; i < gui->disaster_type_count && i < 35; i++) {
     gui->selected_disaster_type = 0;
     gui->start_year = min_year > 0 ? min_year : 1900;
     gui->end_year = max_year > 0 ? max_year : 2025;
-    gui->country_dropdown_open = false;
+    gui->country_dropout_open = false;
     gui->type_dropdown_open = false;
     gui->scroll_offset = 0;
     gui->table_scroll_y = 0;
+    memset(gui->country_input, 0, sizeof(gui->country_input));
+    gui->country_input_active = false;
 }
 
 // Função para carregar dados originais e converter para esquema estrela
@@ -678,10 +810,10 @@ int main() {
 
         // Dividir tela em seções
         Rectangle header_rect = {0, 0, SCREEN_WIDTH, 60};
-        Rectangle filter_rect = {0, 60, SCREEN_WIDTH, 120};
-        Rectangle chart_rect = {0, 180, SCREEN_WIDTH/2, SCREEN_HEIGHT/2 - 90};
-        Rectangle stats_rect = {SCREEN_WIDTH/2, 180, SCREEN_WIDTH/2, SCREEN_HEIGHT/2 - 90};
-        Rectangle table_rect = {0, SCREEN_HEIGHT/2 + 90, SCREEN_WIDTH, SCREEN_HEIGHT/2 - 90};
+        Rectangle filter_rect = {0, 60, SCREEN_WIDTH, 140};
+        Rectangle chart_rect = {0, 200, SCREEN_WIDTH/2, 250};  // Altura fixa menor
+        Rectangle stats_rect = {SCREEN_WIDTH/2, 200, SCREEN_WIDTH/2, 250};  // Altura fixa menor
+        Rectangle table_rect = {0, 450, SCREEN_WIDTH, SCREEN_HEIGHT - 450};  // Resto da tela para tabela
 
         // Desenhar componentes
         DrawApplicationHeader(header_rect);
