@@ -9,7 +9,7 @@
 #include <string.h>
 
 // =============================================================================
-// TABELA FATO (centro da estrela)
+// TABELA FATO
 // =============================================================================
 typedef struct {
     int fact_id;
@@ -57,7 +57,6 @@ typedef struct {
 // Dimensão Evento
 typedef struct {
     int event_key;
-    char event_name[100];
     char origin[50];
     char associated_types[100];
 } DimEvent;
@@ -88,12 +87,6 @@ typedef struct {
     char disaster_group[50];
 } DisasterTypeIndex;
 
-// Índices para dimensão evento
-typedef struct {
-    int event_key;
-    char event_name[100];
-} EventIndex;
-
 // =============================================================================
 // ESTRUTURA PRINCIPAL DO DATA WAREHOUSE
 // =============================================================================
@@ -102,7 +95,6 @@ typedef struct {
     DimTime *dim_time;
     DimGeography *dim_geography;
     DimDisasterType *dim_disaster_type;
-    DimEvent *dim_event;
 
     // Tabela fato
     DisasterFact *fact_table;
@@ -111,21 +103,18 @@ typedef struct {
     int time_count;
     int geography_count;
     int disaster_type_count;
-    int event_count;
     int fact_count;
 
     // Capacidades dos arrays
     int time_capacity;
     int geography_capacity;
     int disaster_type_capacity;
-    int event_capacity;
     int fact_capacity;
 
     // Próximas chaves primárias
     int next_time_key;
     int next_geography_key;
     int next_disaster_type_key;
-    int next_event_key;
     int next_fact_id;
 
 } DataWarehouse;
@@ -146,19 +135,16 @@ int dw_insert_geography_dimension(DataWarehouse *dw, const char *country,
 int dw_insert_disaster_type_dimension(DataWarehouse *dw, const char *disaster_group,
                                     const char *disaster_subgroup, const char *disaster_type,
                                     const char *disaster_subtype);
-int dw_insert_event_dimension(DataWarehouse *dw, const char *event_name,
-                            const char *origin, const char *associated_types);
 
 // Função para inserir fato
 int dw_insert_fact(DataWarehouse *dw, int time_key, int geography_key,
-                  int disaster_type_key, int event_key, int total_deaths,
+                  int disaster_type_key, int total_deaths,
                   long long total_affected, long long total_damage);
 
 // Funções de busca nas dimensões
 int dw_find_time_key(DataWarehouse *dw, int year, int month, int day);
 int dw_find_geography_key(DataWarehouse *dw, const char *country);
 int dw_find_disaster_type_key(DataWarehouse *dw, const char *disaster_type);
-int dw_find_event_key(DataWarehouse *dw, const char *event_name);
 
 // Funções de consulta OLAP
 void dw_query_by_year(DataWarehouse *dw, int year);
@@ -185,12 +171,9 @@ typedef struct {
     char disaster_subgroup[50];
     char disaster_type[50];
     char disaster_subtype[50];
-    char event_name[100];
     char country[50];
     char subregion[50];
     char region[50];
-    char origin[50];
-    char associated_types[100];
     int start_year;
     int start_month;
     int start_day;

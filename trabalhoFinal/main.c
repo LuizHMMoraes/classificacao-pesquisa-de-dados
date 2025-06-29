@@ -1,7 +1,3 @@
-// =============================================================================
-// main.c
-// =============================================================================
-
 #include <raylib.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,8 +14,8 @@
 
 #define SCREEN_WIDTH 1600
 #define SCREEN_HEIGHT 1000
-#define MAX_DISASTERS 10000
-#define MAX_COUNTRIES 200
+#define MAX_DISASTERS 30000
+#define MAX_COUNTRIES 250
 #define MAX_DISASTER_TYPES 50
 #define MAX_VISIBLE_RECORDS 20
 
@@ -36,7 +32,6 @@
 typedef struct {
     char country[50];
     char disaster_type[50];
-    char event_name[100];
     int start_year;
     int start_month;
     int start_day;
@@ -93,7 +88,7 @@ typedef struct {
 } DisasterGUI;
 
 // =============================================================================
-// IMPLEMENTAÇÕES DAS FUNÇÕES NECESSÁRIAS
+// IMPLEMENTAÇÕES DAS FUNÇÕES
 // =============================================================================
 
 // Inicializar estrutura GUI
@@ -198,7 +193,7 @@ void DrawFilterControls(Rectangle bounds, DisasterGUI *gui, bool *filters_change
     DrawRectangleLinesEx(bounds, 1, BORDER_COLOR);
 
     // Dropdown para países
-    Rectangle country_rect = {bounds.x + 20, bounds.y + 20, 200, 30};
+    Rectangle country_rect = {bounds.x + 20, bounds.y + 20, 300, 30};
     const char *country_text = gui->countries[gui->selected_country];
 
     if (DrawDropdown(country_rect, country_text, gui->countries,
@@ -207,7 +202,7 @@ void DrawFilterControls(Rectangle bounds, DisasterGUI *gui, bool *filters_change
     }
 
     // Dropdown para tipos de desastre
-    Rectangle type_rect = {bounds.x + 240, bounds.y + 20, 200, 30};
+    Rectangle type_rect = {bounds.x + 240, bounds.y + 20, 300, 30};
     const char *type_text = gui->disaster_types[gui->selected_disaster_type];
 
     if (DrawDropdown(type_rect, type_text, gui->disaster_types,
@@ -366,7 +361,7 @@ void DrawDataTable(Rectangle bounds, DisasterRecord *records, int count, int *sc
         DrawText(TextFormat("%d", record->start_year), bounds.x + 300, y_pos, 11, TEXT_COLOR);
         DrawText(TextFormat("%d", record->total_deaths), bounds.x + 350, y_pos, 11, TEXT_COLOR);
 
-        // Formatear números grandes
+        // Formatar números grandes
         if (record->total_affected >= 1000000) {
             DrawText(TextFormat("%.1fM", record->total_affected / 1000000.0),
                      bounds.x + 420, y_pos, 11, TEXT_COLOR);
@@ -391,9 +386,17 @@ void DrawDataTable(Rectangle bounds, DisasterRecord *records, int count, int *sc
     }
 }
 
-// Função para desenhar dropdown customizado
+// Função para desenhar dropdown
 bool DrawDropdown(Rectangle bounds, const char *text, char items[][50],
                        int item_count, int *selected_index, bool *is_open) {
+
+//**DEBUG ITENS NO DROPDOWN:
+    printf("DrawDropdown called with item_count: %d\n", item_count);
+    if (item_count > 0) {
+        printf("First item: '%s'\n", items[0]);
+        printf("Last item: '%s'\n", items[item_count-1]);
+    }
+
     bool pressed = false;
     Vector2 mouse_pos = GetMousePosition();
 
@@ -464,7 +467,6 @@ void LoadDataFromStarSchema(DisasterGUI *gui, DataWarehouse *dw) {
         DimTime *time_dim = NULL;
         DimGeography *geo_dim = NULL;
         DimDisasterType *type_dim = NULL;
-        DimEvent *event_dim = NULL;
 
         // Encontra dimensão tempo
         for (int j = 0; j < dw->time_count; j++) {
@@ -490,18 +492,9 @@ void LoadDataFromStarSchema(DisasterGUI *gui, DataWarehouse *dw) {
             }
         }
 
-        // Encontra dimensão evento
-        for (int j = 0; j < dw->event_count; j++) {
-            if (dw->dim_event[j].event_key == fact->event_key) {
-                event_dim = &dw->dim_event[j];
-                break;
-            }
-        }
-
         // Preenche dados do registro
         strcpy(record->country, geo_dim ? geo_dim->country : "Unknown");
         strcpy(record->disaster_type, type_dim ? type_dim->disaster_type : "Unknown");
-        strcpy(record->event_name, event_dim ? event_dim->event_name : "Unknown Event");
 
         record->start_year = time_dim ? time_dim->start_year : 0;
         record->start_month = time_dim ? time_dim->start_month : 1;
@@ -532,6 +525,20 @@ void LoadDataFromStarSchema(DisasterGUI *gui, DataWarehouse *dw) {
         }
     }
 
+//**DEBUG PAÍSES:
+printf("=== UNIQUE EXTRACTION DEBUG ===\n");
+printf("Countries extracted (%d total):\n", gui->country_count);
+for (int i = 0; i < gui->country_count && i < 20; i++) {
+    printf("  %d: '%s'\n", i, gui->countries[i]);
+}
+
+// Também verificar dados brutos
+printf("\nSample of raw disaster records:\n");
+for (int i = 0; i < (gui->disaster_count > 20 ? 20 : gui->disaster_count); i++) {
+    printf("  Record %d: '%s' - '%s' - %d\n",
+           i, gui->disasters[i].country, gui->disasters[i].disaster_type, gui->disasters[i].start_year);
+}
+
     // Extrair tipos de desastre únicos
     gui->disaster_type_count = 0;
     strcpy(gui->disaster_types[gui->disaster_type_count++], "All Types");
@@ -549,6 +556,12 @@ void LoadDataFromStarSchema(DisasterGUI *gui, DataWarehouse *dw) {
         }
     }
 
+//**DEBUG DESASTRES TIPO:
+printf("\nDisaster types extracted (%d total):\n", gui->disaster_type_count);
+for (int i = 0; i < gui->disaster_type_count && i < 35; i++) {
+    printf("  %d: '%s'\n", i, gui->disaster_types[i]);
+}
+
     // Encontrar intervalo de anos
     int min_year = 9999, max_year = 0;
     for (int i = 0; i < gui->disaster_count; i++) {
@@ -561,8 +574,8 @@ void LoadDataFromStarSchema(DisasterGUI *gui, DataWarehouse *dw) {
     // Inicializar filtros
     gui->selected_country = 0;
     gui->selected_disaster_type = 0;
-    gui->start_year = min_year > 0 ? min_year : 2000;
-    gui->end_year = max_year > 0 ? max_year : 2024;
+    gui->start_year = min_year > 0 ? min_year : 1900;
+    gui->end_year = max_year > 0 ? max_year : 2025;
     gui->country_dropdown_open = false;
     gui->type_dropdown_open = false;
     gui->scroll_offset = 0;
@@ -582,6 +595,9 @@ int load_and_convert_to_star_schema(const char *binary_filename, DataWarehouse *
         fclose(file);
         return 0;
     }
+
+//**DEBUGGIN TOTAL RECORDS:
+    printf("Total records in file: %d\n", total_records);
 
     // Cria o data warehouse
     *dw = dw_create();
@@ -604,6 +620,9 @@ int load_and_convert_to_star_schema(const char *binary_filename, DataWarehouse *
         }
     }
 
+//**DEBUGGIN REGISTROS CONVERTIDOS COM SUCESSO:
+    printf("Successfully converted: %d out of %d records\n", converted_count, total_records);
+
     fclose(file);
     return converted_count > 0 ? 1 : 0;
 }
@@ -621,9 +640,25 @@ int main() {
     // Tentar carregar dados originais e converter para esquema estrela
     if (load_and_convert_to_star_schema(binary_filename, &dw)) {
         printf("✅ Dados carregados do arquivo binário com sucesso\n");
+
+//**DEBUGGIN REGISTROS LIDOS COM SUCESSO:
+    printf("=== DEBUG INFO ===\n");
+    printf("DataWarehouse Facts: %d\n", dw->fact_count);
+    printf("Geography Dimensions: %d\n", dw->geography_count);
+    printf("Disaster Type Dimensions: %d\n", dw->disaster_type_count);
+    printf("Time Dimensions: %d\n", dw->time_count);
+
         LoadDataFromStarSchema(gui, dw);
+
+//**DEBUGGIN QUANTOS REGISTROS CHEGAM ATÉ A GUI:
+    printf("GUI Disaster Count: %d\n", gui->disaster_count);
+    printf("GUI Country Count: %d\n", gui->country_count);
+    printf("GUI Disaster Type Count: %d\n", gui->disaster_type_count);
+    printf("Year Range: %d - %d\n", gui->start_year, gui->end_year);
+    printf("==================\n");
+
     } else {
-        printf("⚠️ Arquivo binário não encontrado - usando dados de exemplo\n");
+        printf("⚠️ Arquivo binário não encontrado\n");
         // Usar implementação do disaster_gui.c
     }
 

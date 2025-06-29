@@ -14,12 +14,9 @@ typedef struct {
     char disaster_subgroup[50];
     char disaster_type[50];
     char disaster_subtype[50];
-    char event_name[100];
     char country[50];
     char subregion[50];
     char region[50];
-    char origin[50];
-    char associated_types[100];
     int start_year;
     int start_month;
     int start_day;

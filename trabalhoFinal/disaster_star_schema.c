@@ -16,21 +16,19 @@ DataWarehouse* dw_create() {
     if (!dw) return NULL;
 
     // Inicializa capacidades
-    dw->time_capacity = 1000;
+    dw->time_capacity = 50000;
     dw->geography_capacity = 500;
     dw->disaster_type_capacity = 100;
-    dw->event_capacity = 10000;
     dw->fact_capacity = 50000;
 
     // Aloca memória para as tabelas
     dw->dim_time = malloc(dw->time_capacity * sizeof(DimTime));
     dw->dim_geography = malloc(dw->geography_capacity * sizeof(DimGeography));
     dw->dim_disaster_type = malloc(dw->disaster_type_capacity * sizeof(DimDisasterType));
-    dw->dim_event = malloc(dw->event_capacity * sizeof(DimEvent));
     dw->fact_table = malloc(dw->fact_capacity * sizeof(DisasterFact));
 
     if (!dw->dim_time || !dw->dim_geography || !dw->dim_disaster_type ||
-        !dw->dim_event || !dw->fact_table) {
+        !dw->fact_table) {
         dw_destroy(dw);
         return NULL;
     }
@@ -39,14 +37,12 @@ DataWarehouse* dw_create() {
     dw->time_count = 0;
     dw->geography_count = 0;
     dw->disaster_type_count = 0;
-    dw->event_count = 0;
     dw->fact_count = 0;
 
     // Inicializa próximas chaves
     dw->next_time_key = 1;
     dw->next_geography_key = 1;
     dw->next_disaster_type_key = 1;
-    dw->next_event_key = 1;
     dw->next_fact_id = 1;
 
     return dw;
@@ -58,7 +54,6 @@ void dw_destroy(DataWarehouse *dw) {
     free(dw->dim_time);
     free(dw->dim_geography);
     free(dw->dim_disaster_type);
-    free(dw->dim_event);
     free(dw->fact_table);
     free(dw);
 }
@@ -119,26 +114,12 @@ int dw_insert_disaster_type_dimension(DataWarehouse *dw, const char *disaster_gr
     return type_dim->disaster_type_key;
 }
 
-int dw_insert_event_dimension(DataWarehouse *dw, const char *event_name,
-                             const char *origin, const char *associated_types) {
-    if (!dw || dw->event_count >= dw->event_capacity) return -1;
-
-    DimEvent *event_dim = &dw->dim_event[dw->event_count];
-    event_dim->event_key = dw->next_event_key++;
-    strncpy(event_dim->event_name, event_name ? event_name : "", sizeof(event_dim->event_name) - 1);
-    strncpy(event_dim->origin, origin ? origin : "", sizeof(event_dim->origin) - 1);
-    strncpy(event_dim->associated_types, associated_types ? associated_types : "", sizeof(event_dim->associated_types) - 1);
-
-    dw->event_count++;
-    return event_dim->event_key;
-}
-
 // =============================================================================
 // FUNÇÃO DE INSERÇÃO DE FATOS
 // =============================================================================
 
 int dw_insert_fact(DataWarehouse *dw, int time_key, int geography_key,
-                   int disaster_type_key, int event_key, int total_deaths,
+                   int disaster_type_key, int total_deaths,
                    long long total_affected, long long total_damage) {
     if (!dw || dw->fact_count >= dw->fact_capacity) return -1;
 
@@ -147,7 +128,6 @@ int dw_insert_fact(DataWarehouse *dw, int time_key, int geography_key,
     fact->time_key = time_key;
     fact->geography_key = geography_key;
     fact->disaster_type_key = disaster_type_key;
-    fact->event_key = event_key;
     fact->total_deaths = total_deaths;
     fact->total_affected = total_affected;
     fact->total_damage = total_damage;
@@ -190,17 +170,6 @@ int dw_find_disaster_type_key(DataWarehouse *dw, const char *disaster_type) {
     for (int i = 0; i < dw->disaster_type_count; i++) {
         if (strcmp(dw->dim_disaster_type[i].disaster_type, disaster_type) == 0) {
             return dw->dim_disaster_type[i].disaster_type_key;
-        }
-    }
-    return -1;
-}
-
-int dw_find_event_key(DataWarehouse *dw, const char *event_name) {
-    if (!dw || !event_name) return -1;
-
-    for (int i = 0; i < dw->event_count; i++) {
-        if (strcmp(dw->dim_event[i].event_name, event_name) == 0) {
-            return dw->dim_event[i].event_key;
         }
     }
     return -1;
@@ -454,14 +423,6 @@ int dw_save_to_files(DataWarehouse *dw, const char *base_filename) {
     fwrite(dw->dim_disaster_type, sizeof(DimDisasterType), dw->disaster_type_count, file);
     fclose(file);
 
-    // Salva dimensão evento
-    snprintf(filename, sizeof(filename), "%s_event.dat", base_filename);
-    file = fopen(filename, "wb");
-    if (!file) return 0;
-    fwrite(&dw->event_count, sizeof(int), 1, file);
-    fwrite(dw->dim_event, sizeof(DimEvent), dw->event_count, file);
-    fclose(file);
-
     // Salva tabela fato
     snprintf(filename, sizeof(filename), "%s_fact.dat", base_filename);
     file = fopen(filename, "wb");
@@ -516,17 +477,6 @@ DataWarehouse* dw_load_from_files(const char *base_filename) {
     fread(dw->dim_disaster_type, sizeof(DimDisasterType), dw->disaster_type_count, file);
     fclose(file);
 
-    // Carrega dimensão evento
-    snprintf(filename, sizeof(filename), "%s_event.dat", base_filename);
-    file = fopen(filename, "rb");
-    if (!file) {
-        dw_destroy(dw);
-        return NULL;
-    }
-    fread(&dw->event_count, sizeof(int), 1, file);
-    fread(dw->dim_event, sizeof(DimEvent), dw->event_count, file);
-    fclose(file);
-
     // Carrega tabela fato
     snprintf(filename, sizeof(filename), "%s_fact.dat", base_filename);
     file = fopen(filename, "rb");
@@ -553,7 +503,6 @@ void dw_print_statistics(DataWarehouse *dw) {
     printf("  - Tempo: %d registros\n", dw->time_count);
     printf("  - Geografia: %d registros\n", dw->geography_count);
     printf("  - Tipo de Desastre: %d registros\n", dw->disaster_type_count);
-    printf("  - Evento: %d registros\n", dw->event_count);
     printf("Fatos: %d registros\n", dw->fact_count);
     printf("========================================\n");
 }
@@ -600,14 +549,8 @@ int dw_convert_from_original(DataWarehouse *dw, OriginalDisaster *original) {
                                                              original->disaster_subtype);
     }
 
-    // Busca ou cria dimensão evento
-    int event_key = dw_find_event_key(dw, original->event_name);
-    if (event_key == -1) {
-        event_key = dw_insert_event_dimension(dw, original->event_name, original->origin, original->associated_types);
-    }
-
     // Insere fato
-    int fact_id = dw_insert_fact(dw, time_key, geography_key, disaster_type_key, event_key,
+    int fact_id = dw_insert_fact(dw, time_key, geography_key, disaster_type_key,
                                 original->total_deaths, original->total_affected, original->total_damage);
 
     return (fact_id != -1);
