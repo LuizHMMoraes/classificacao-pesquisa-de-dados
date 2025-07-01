@@ -13,15 +13,40 @@
 				<Option compiler="gcc" />
 				<Compiler>
 					<Add option="-g" />
+					<Add directory="/home/luiz/raylib/src" />
 				</Compiler>
+				<Linker>
+					<Add option="-L/home/raylib/build" />
+					<Add option="-Wl,-rpath=/home/raylib/build" />
+					<Add option="-lm -ldl -lpthread" />
+					<Add library="raylib" />
+				</Linker>
 			</Target>
 		</Build>
 		<Compiler>
 			<Add option="-Wall" />
 		</Compiler>
+		<Unit filename="bplus.c">
+			<Option compilerVar="CC" />
+		</Unit>
+		<Unit filename="bplus.h" />
+		<Unit filename="desastres.bin" />
+		<Unit filename="disaster.h" />
+		<Unit filename="disaster_star_schema.c">
+			<Option compilerVar="CC" />
+		</Unit>
+		<Unit filename="disaster_star_schema.h" />
 		<Unit filename="main.c">
 			<Option compilerVar="CC" />
 		</Unit>
+		<Unit filename="star_schema_indexes.c">
+			<Option compilerVar="CC" />
+		</Unit>
+		<Unit filename="star_schema_indexes.h" />
+		<Unit filename="trie.c">
+			<Option compilerVar="CC" />
+		</Unit>
+		<Unit filename="trie.h" />
 		<Extensions />
 	</Project>
 </CodeBlocks_project_file>

@@ -12,6 +12,7 @@
 #include "disaster_star_schema.h"
 #include "bplus.h"
 #include "trie.h"
+#include "star_schema_indexes.h"
 
 #define SCREEN_WIDTH 1600
 #define SCREEN_HEIGHT 1000
@@ -31,8 +32,13 @@
 
 // Estrutura para armazenar dados de desastre
 typedef struct {
-    char country[50];
+    char disaster_group[50];
+    char disaster_subgroup[50];
     char disaster_type[50];
+    char disaster_subtype[50];
+    char country[50];
+    char subregion[50];
+    char region[50];
     int start_year;
     int start_month;
     int start_day;
@@ -73,6 +79,10 @@ typedef struct {
     //Campo de texto para países
     char country_input[50];
     bool country_input_active;
+
+    // Sistema de índices
+    OptimizedDataWarehouse *optimized_dw;
+    bool use_optimized_queries;
 
     // Estados da interface
     bool country_dropout_open;
@@ -122,53 +132,110 @@ void ApplyFilters(DisasterGUI *gui) {
     gui->total_deaths_filtered = 0;
     gui->total_damage_filtered = 0;
 
-    for (int i = 0; i < gui->disaster_count; i++) {
-        DisasterRecord *record = &gui->disasters[i];
-        bool include = true;
+    // Se temos sistema otimizado e consulta simples, usar índices
+    if (gui->use_optimized_queries && gui->optimized_dw) {
+        int *result_ids = NULL;
+        int result_count = 0;
 
-        // Filtro por país usando input de texto
+        // Consulta otimizada por país
         if (strlen(gui->country_input) > 0) {
-            // Busca case-insensitive
-            char country_lower[50], input_lower[50];
-            strcpy(country_lower, record->country);
-            strcpy(input_lower, gui->country_input);
+            result_ids = optimized_query_by_country(gui->optimized_dw,
+                                                   gui->country_input,
+                                                   &result_count);
 
-            // Converter para minúsculas
-            for (int j = 0; country_lower[j]; j++) {
-                country_lower[j] = tolower(country_lower[j]);
+            if (result_ids && result_count > 0) {
+                printf("🚀 Consulta otimizada retornou %d resultados\n", result_count);
+
+                // Copiar resultados usando os IDs dos fatos
+                for (int i = 0; i < result_count && gui->filtered_count < MAX_DISASTERS; i++) {
+                    int fact_id = result_ids[i];
+                    if (fact_id >= 0 && fact_id < gui->disaster_count) {
+                        DisasterRecord *record = &gui->disasters[fact_id];
+
+                        // Aplicar filtros adicionais
+                        bool include = true;
+
+                        // Filtro por tipo de desastre
+                        if (gui->selected_disaster_type > 0) {
+                            if (strcmp(record->disaster_type,
+                                     gui->disaster_types[gui->selected_disaster_type]) != 0) {
+                                include = false;
+                            }
+                        }
+
+                        // Filtro por ano
+                        if (record->start_year < gui->start_year ||
+                            record->start_year > gui->end_year) {
+                            include = false;
+                        }
+
+                        if (include) {
+                            gui->filtered_disasters[gui->filtered_count] = *record;
+                            gui->filtered_count++;
+                            gui->total_affected_filtered += record->total_affected;
+                            gui->total_deaths_filtered += record->total_deaths;
+                            gui->total_damage_filtered += record->total_damage;
+                        }
+                    }
+                }
+
+                free(result_ids);
             }
-            for (int j = 0; input_lower[j]; j++) {
-                input_lower[j] = tolower(input_lower[j]);
-            }
-
-            // Verificar se contém o texto
-            if (strstr(country_lower, input_lower) == NULL) {
-                include = false;
-            }
-        }
-
-        // Filtro por tipo de desastre
-        if (gui->selected_disaster_type > 0) {
-            if (strcmp(record->disaster_type, gui->disaster_types[gui->selected_disaster_type]) != 0) {
-                include = false;
-            }
-        }
-
-        // Filtro por ano
-        if (record->start_year < gui->start_year || record->start_year > gui->end_year) {
-            include = false;
-        }
-
-        if (include) {
-            gui->filtered_disasters[gui->filtered_count] = *record;
-            gui->filtered_count++;
-            gui->total_affected_filtered += record->total_affected;
-            gui->total_deaths_filtered += record->total_deaths;
-            gui->total_damage_filtered += record->total_damage;
+        } else {
+            // Fallback para busca convencional se não há filtro de país
+            gui->use_optimized_queries = false;
         }
     }
 
-    // Calcular estatísticas por país (código existente mantido)
+    // Consulta convencional (fallback ou quando não há índices)
+    if (!gui->use_optimized_queries || gui->filtered_count == 0) {
+        for (int i = 0; i < gui->disaster_count; i++) {
+            DisasterRecord *record = &gui->disasters[i];
+            bool include = true;
+
+            // Filtro por país usando input de texto
+            if (strlen(gui->country_input) > 0) {
+                char country_lower[50], input_lower[50];
+                strcpy(country_lower, record->country);
+                strcpy(input_lower, gui->country_input);
+
+                for (int j = 0; country_lower[j]; j++) {
+                    country_lower[j] = tolower(country_lower[j]);
+                }
+                for (int j = 0; input_lower[j]; j++) {
+                    input_lower[j] = tolower(input_lower[j]);
+                }
+
+                if (strstr(country_lower, input_lower) == NULL) {
+                    include = false;
+                }
+            }
+
+            // Filtro por tipo de desastre
+            if (gui->selected_disaster_type > 0) {
+                if (strcmp(record->disaster_type,
+                         gui->disaster_types[gui->selected_disaster_type]) != 0) {
+                    include = false;
+                }
+            }
+
+            // Filtro por ano
+            if (record->start_year < gui->start_year ||
+                record->start_year > gui->end_year) {
+                include = false;
+            }
+
+            if (include) {
+                gui->filtered_disasters[gui->filtered_count] = *record;
+                gui->filtered_count++;
+                gui->total_affected_filtered += record->total_affected;
+                gui->total_deaths_filtered += record->total_deaths;
+                gui->total_damage_filtered += record->total_damage;
+            }
+        }
+    }
+
+    // Calcular estatísticas por país
     gui->country_stats_count = 0;
     for (int i = 0; i < gui->filtered_count && gui->country_stats_count < MAX_COUNTRIES; i++) {
         DisasterRecord *record = &gui->filtered_disasters[i];
@@ -194,7 +261,8 @@ void ApplyFilters(DisasterGUI *gui) {
 }
 
 bool DrawDropdown(Rectangle bounds, const char *label, char options[][50], int option_count, int *selected, bool *open);
-bool DrawTextInput(Rectangle bounds, const char *label, char *text, int max_length, bool *is_active);
+bool DrawTextInput(Rectangle bounds, const char *label, char *text, int max_length, bool *is_active, DisasterGUI *gui);
+void HandleCountryAutocomplete(DisasterGUI *gui);
 
 // Desenhar cabeçalho da aplicação
 void DrawApplicationHeader(Rectangle bounds) {
@@ -210,25 +278,26 @@ void DrawFilterControls(Rectangle bounds, DisasterGUI *gui, bool *filters_change
 
     // Input de texto para países
     Rectangle country_input_rect = {bounds.x + 20, bounds.y + 40, 300, 30};
-    if (DrawTextInput(country_input_rect, "Countries:", gui->country_input, 50, &gui->country_input_active)) {
+    if (DrawTextInput(country_input_rect, "Countries:", gui->country_input, 50, &gui->country_input_active, gui)) {
         *filters_changed = true;
     }
 
-    // Dropdown para tipos de desastre (movido para baixo)
-    Rectangle type_rect = {bounds.x + 20, bounds.y + 90, 300, 30};
-    const char *type_text = gui->disaster_types[gui->selected_disaster_type];
-
-    if (DrawDropdown(type_rect, type_text, gui->disaster_types,
-                          gui->disaster_type_count, &gui->selected_disaster_type, &gui->type_dropdown_open)) {
-        *filters_changed = true;
-    }
-
-    // Controles de ano (ao lado do input de países)
+    // Controles de ano (movidos para a direita do input de países)
     DrawText("Start Year:", bounds.x + 350, bounds.y + 20, 14, TEXT_COLOR);
     DrawText(TextFormat("%d", gui->start_year), bounds.x + 350, bounds.y + 45, 14, TEXT_COLOR);
 
     DrawText("End Year:", bounds.x + 450, bounds.y + 20, 14, TEXT_COLOR);
     DrawText(TextFormat("%d", gui->end_year), bounds.x + 450, bounds.y + 45, 14, TEXT_COLOR);
+}
+
+// Função para comparar CountryStats para ordenação (maior para menor)
+int compare_country_stats(const void *a, const void *b) {
+    CountryStats *stats_a = (CountryStats *)a;
+    CountryStats *stats_b = (CountryStats *)b;
+
+    if (stats_b->total_affected > stats_a->total_affected) return 1;
+    if (stats_b->total_affected < stats_a->total_affected) return -1;
+    return 0;
 }
 
 // Desenhar gráfico de barras
@@ -239,43 +308,51 @@ void DrawBarChart(Rectangle bounds, CountryStats *stats, int count) {
 
     if (count == 0) return;
 
-    // Encontrar valor máximo
-    long long max_affected = 0;
-    for (int i = 0; i < count; i++) {
-        if (stats[i].total_affected > max_affected) {
-            max_affected = stats[i].total_affected;
-        }
-    }
+    // Criar cópia dos dados para ordenação
+    CountryStats *sorted_stats = malloc(count * sizeof(CountryStats));
+    if (!sorted_stats) return;
 
-    if (max_affected == 0) return;
+    memcpy(sorted_stats, stats, count * sizeof(CountryStats));
+
+    // Ordenar do maior para o menor
+    qsort(sorted_stats, count, sizeof(CountryStats), compare_country_stats);
+
+    // Encontrar valor máximo (agora será o primeiro após ordenação)
+    long long max_affected = sorted_stats[0].total_affected;
+    if (max_affected == 0) {
+        free(sorted_stats);
+        return;
+    }
 
     // Desenhar barras (máximo 10)
     int bars_to_show = count > 10 ? 10 : count;
     float bar_height = (bounds.height - 60) / bars_to_show;
 
     for (int i = 0; i < bars_to_show; i++) {
-        float bar_width = (stats[i].total_affected / (float)max_affected) * (bounds.width - 200);
+        float bar_width = (sorted_stats[i].total_affected / (float)max_affected) * (bounds.width - 305);
 
-        Rectangle bar_rect = {bounds.x + 150, bounds.y + 40 + i * bar_height,
+        Rectangle bar_rect = {bounds.x + 250, bounds.y + 40 + i * bar_height,
                              bar_width, bar_height - 5};
 
         Color bar_color = {52 + (i * 20) % 150, 152, 219, 255};
         DrawRectangleRec(bar_rect, bar_color);
 
         // Nome do país
-        DrawText(stats[i].country, bounds.x + 10, bounds.y + 42 + i * bar_height, 12, TEXT_COLOR);
+        DrawText(sorted_stats[i].country, bounds.x + 10, bounds.y + 42 + i * bar_height, 12, TEXT_COLOR);
 
         // Valor
         char value_text[50];
-        if (stats[i].total_affected >= 1000000) {
-            sprintf(value_text, "%.1fM", stats[i].total_affected / 1000000.0);
-        } else if (stats[i].total_affected >= 1000) {
-            sprintf(value_text, "%.1fK", stats[i].total_affected / 1000.0);
+        if (sorted_stats[i].total_affected >= 1000000) {
+            sprintf(value_text, "%.1fM", sorted_stats[i].total_affected / 1000000.0);
+        } else if (sorted_stats[i].total_affected >= 1000) {
+            sprintf(value_text, "%.1fK", sorted_stats[i].total_affected / 1000.0);
         } else {
-            sprintf(value_text, "%lld", stats[i].total_affected);
+            sprintf(value_text, "%lld", sorted_stats[i].total_affected);
         }
         DrawText(value_text, bar_rect.x + bar_rect.width + 5, bounds.y + 42 + i * bar_height, 12, TEXT_COLOR);
     }
+
+    free(sorted_stats);
 }
 
 // Desenhar painel de estatísticas detalhadas
@@ -327,6 +404,92 @@ void DrawDetailedStatsPanel(Rectangle bounds, DisasterGUI *gui) {
              bounds.x + 20, bounds.y + y_offset, 14, TEXT_COLOR);
 }
 
+// Desenhar lista de tipos de desastre clicáveis
+void DrawDisasterTypeList(Rectangle bounds, DisasterGUI *gui, bool *filters_changed) {
+    DrawRectangleRec(bounds, PANEL_COLOR);
+    DrawRectangleLinesEx(bounds, 1, BORDER_COLOR);
+    DrawText("Disaster Types", bounds.x + 10, bounds.y + 10, 16, TEXT_COLOR);
+
+    if (gui->disaster_type_count <= 1) return;
+
+    // Calcular dimensões dos itens
+    int items_per_column = (gui->disaster_type_count - 1 + 1) / 2; // -1 para excluir "All Types", +1 para arredondar
+    float item_height = (bounds.height - 40) / items_per_column;
+    float column_width = bounds.width / 2;
+
+    Vector2 mouse_pos = GetMousePosition();
+
+    // Desenhar itens em duas colunas (começando do índice 1 para pular "All Types")
+    for (int i = 1; i < gui->disaster_type_count; i++) {
+        int item_index = i - 1; // Ajustar índice para começar de 0
+        int column = item_index / items_per_column;
+        int row = item_index % items_per_column;
+
+        Rectangle item_rect = {
+            bounds.x + 10 + column * column_width,
+            bounds.y + 35 + row * item_height,
+            column_width - 20,
+            item_height - 2
+        };
+
+        // Verificar se este tipo está selecionado
+        bool is_selected = (gui->selected_disaster_type == i);
+
+        // Cores baseadas no estado
+        Color item_color;
+        if (is_selected) {
+            item_color = PRIMARY_COLOR;
+        } else if (CheckCollisionPointRec(mouse_pos, item_rect)) {
+            item_color = (Color){220, 220, 225, 255};
+        } else {
+            item_color = (Color){248, 248, 250, 255};
+        }
+
+        DrawRectangleRec(item_rect, item_color);
+        DrawRectangleLinesEx(item_rect, 1, BORDER_COLOR);
+
+        // Cor do texto
+        Color text_color = is_selected ? WHITE : TEXT_COLOR;
+
+        // Desenhar texto truncado se necessário
+        int text_width = MeasureText(gui->disaster_types[i], 12);
+        if (text_width > item_rect.width - 10) {
+            char truncated[50];
+            strncpy(truncated, gui->disaster_types[i], 20);
+            truncated[20] = '\0';
+            strcat(truncated, "...");
+            DrawText(truncated, item_rect.x + 5, item_rect.y + 5, 12, text_color);
+        } else {
+            DrawText(gui->disaster_types[i], item_rect.x + 5, item_rect.y + 5, 12, text_color);
+        }
+
+        // Verificar clique
+        if (CheckCollisionPointRec(mouse_pos, item_rect) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            if (gui->selected_disaster_type == i) {
+                // Se já está selecionado, desselecionar (voltar para "All Types")
+                gui->selected_disaster_type = 0;
+            } else {
+                // Selecionar este tipo
+                gui->selected_disaster_type = i;
+            }
+            *filters_changed = true;
+        }
+    }
+
+    // Botão "Clear Filter" no canto inferior
+    Rectangle clear_rect = {bounds.x + bounds.width - 80, bounds.y + bounds.height - 25, 70, 20};
+    Color clear_color = CheckCollisionPointRec(mouse_pos, clear_rect) ?
+                       ACCENT_COLOR : (Color){200, 200, 200, 255};
+
+    DrawRectangleRec(clear_rect, clear_color);
+    DrawText("Clear", clear_rect.x + 20, clear_rect.y + 3, 12, WHITE);
+
+    if (CheckCollisionPointRec(mouse_pos, clear_rect) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+        gui->selected_disaster_type = 0;
+        *filters_changed = true;
+    }
+}
+
 // Desenhar tabela de dados expandida
 void DrawDataTable(Rectangle bounds, DisasterRecord *records, int count, int *scroll_y) {
     DrawRectangleRec(bounds, PANEL_COLOR);
@@ -340,7 +503,7 @@ void DrawDataTable(Rectangle bounds, DisasterRecord *records, int count, int *sc
     }
 
     // Definir larguras das colunas para ocupar toda a tela
-    float col_widths[] = {220, 140, 120, 80, 100, 80, 80, 85, 85, 80, 100, 100, 100, 120, 80, 100}; // 16 colunas
+    float col_widths[] = {120, 120, 120, 120, 180, 120, 120, 80, 80, 80, 80, 80, 80, 100, 120, 140}; // 16 colunas
     float total_width = 0;
     for (int i = 0; i < 16; i++) {
         total_width += col_widths[i];
@@ -358,9 +521,9 @@ void DrawDataTable(Rectangle bounds, DisasterRecord *records, int count, int *sc
 
     float x_pos = bounds.x + 5;
     const char *headers[] = {
-        "Country", "Disaster Type", "Disaster Group", "Year", "Month", "Day",
-        "End Year", "End Month", "End Day", "Deaths", "Affected", "Injured",
-        "Homeless", "Total Affected", "Damage", "Adjusted Damage"
+        "Disaster Group", "Disaster Subgroup", "Disaster Type", "Disaster Subtype",
+        "Country", "Subregion", "Region", "Start Year", "Start Month", "Start Day",
+        "End Year", "End Month", "End Day", "Total Deaths", "Total Affected", "Total Damage (US$)"
     };
 
     for (int i = 0; i < 16; i++) {
@@ -391,71 +554,59 @@ void DrawDataTable(Rectangle bounds, DisasterRecord *records, int count, int *sc
         x_pos = bounds.x + 5;
 
         // Desenhar cada coluna
-        DrawText(record->country, x_pos, y_pos, 10, TEXT_COLOR);
+        DrawText(record->disaster_group, x_pos, y_pos, 10, TEXT_COLOR);
         x_pos += col_widths[0];
 
-        DrawText(record->disaster_type, x_pos, y_pos, 10, TEXT_COLOR);
+        DrawText(record->disaster_subgroup, x_pos, y_pos, 10, TEXT_COLOR);
         x_pos += col_widths[1];
 
-        DrawText("Natural", x_pos, y_pos, 10, TEXT_COLOR); // Disaster Group (placeholder)
+        DrawText(record->disaster_type, x_pos, y_pos, 10, TEXT_COLOR);
         x_pos += col_widths[2];
 
-        DrawText(TextFormat("%d", record->start_year), x_pos, y_pos, 10, TEXT_COLOR);
+        DrawText(record->disaster_subtype, x_pos, y_pos, 10, TEXT_COLOR);
         x_pos += col_widths[3];
 
-        DrawText(TextFormat("%d", record->start_month), x_pos, y_pos, 10, TEXT_COLOR);
+        DrawText(record->country, x_pos, y_pos, 10, TEXT_COLOR);
         x_pos += col_widths[4];
 
-        DrawText(TextFormat("%d", record->start_day), x_pos, y_pos, 10, TEXT_COLOR);
+        DrawText(record->subregion, x_pos, y_pos, 10, TEXT_COLOR);
         x_pos += col_widths[5];
 
-        DrawText(TextFormat("%d", record->end_year), x_pos, y_pos, 10, TEXT_COLOR);
+        DrawText(record->region, x_pos, y_pos, 10, TEXT_COLOR);
         x_pos += col_widths[6];
 
-        DrawText(TextFormat("%d", record->end_month), x_pos, y_pos, 10, TEXT_COLOR);
+        DrawText(TextFormat("%d", record->start_year), x_pos, y_pos, 10, TEXT_COLOR);
         x_pos += col_widths[7];
 
-        DrawText(TextFormat("%d", record->end_day), x_pos, y_pos, 10, TEXT_COLOR);
+        DrawText(TextFormat("%d", record->start_month), x_pos, y_pos, 10, TEXT_COLOR);
         x_pos += col_widths[8];
 
-        DrawText(TextFormat("%d", record->total_deaths), x_pos, y_pos, 10, TEXT_COLOR);
+        DrawText(TextFormat("%d", record->start_day), x_pos, y_pos, 10, TEXT_COLOR);
         x_pos += col_widths[9];
 
-        // Formatar números grandes
-        if (record->total_affected >= 1000000) {
-            DrawText(TextFormat("%.1fM", record->total_affected / 1000000.0), x_pos, y_pos, 10, TEXT_COLOR);
-        } else if (record->total_affected >= 1000) {
-            DrawText(TextFormat("%.1fK", record->total_affected / 1000.0), x_pos, y_pos, 10, TEXT_COLOR);
-        } else {
-            DrawText(TextFormat("%lld", record->total_affected), x_pos, y_pos, 10, TEXT_COLOR);
-        }
+        DrawText(TextFormat("%d", record->end_year), x_pos, y_pos, 10, TEXT_COLOR);
         x_pos += col_widths[10];
 
-        DrawText("0", x_pos, y_pos, 10, TEXT_COLOR); // Injured (placeholder)
+        DrawText(TextFormat("%d", record->end_month), x_pos, y_pos, 10, TEXT_COLOR);
         x_pos += col_widths[11];
 
-        DrawText("0", x_pos, y_pos, 10, TEXT_COLOR); // Homeless (placeholder)
+        DrawText(TextFormat("%d", record->end_day), x_pos, y_pos, 10, TEXT_COLOR);
         x_pos += col_widths[12];
 
+        DrawText(TextFormat("%d", record->total_deaths), x_pos, y_pos, 10, TEXT_COLOR);
+        x_pos += col_widths[13];
+
+        // Formatar números grandes para Total Affected
         if (record->total_affected >= 1000000) {
             DrawText(TextFormat("%.1fM", record->total_affected / 1000000.0), x_pos, y_pos, 10, TEXT_COLOR);
         } else if (record->total_affected >= 1000) {
             DrawText(TextFormat("%.1fK", record->total_affected / 1000.0), x_pos, y_pos, 10, TEXT_COLOR);
         } else {
             DrawText(TextFormat("%lld", record->total_affected), x_pos, y_pos, 10, TEXT_COLOR);
-        }
-        x_pos += col_widths[13];
-
-        if (record->total_damage >= 1000000) {
-            DrawText(TextFormat("$%.1fM", record->total_damage / 1000000.0), x_pos, y_pos, 10, TEXT_COLOR);
-        } else if (record->total_damage >= 1000) {
-            DrawText(TextFormat("$%.1fK", record->total_damage / 1000.0), x_pos, y_pos, 10, TEXT_COLOR);
-        } else {
-            DrawText(TextFormat("$%lld", record->total_damage), x_pos, y_pos, 10, TEXT_COLOR);
         }
         x_pos += col_widths[14];
 
-        // Adjusted Damage (mesmo valor por enquanto)
+        // Formatar Total Damage
         if (record->total_damage >= 1000000) {
             DrawText(TextFormat("$%.1fM", record->total_damage / 1000000.0), x_pos, y_pos, 10, TEXT_COLOR);
         } else if (record->total_damage >= 1000) {
@@ -517,8 +668,34 @@ bool DrawDropdown(Rectangle bounds, const char *text, char items[][50],
     return pressed;
 }
 
+// Função para autocomplete de países usando índices
+void HandleCountryAutocomplete(DisasterGUI *gui) {
+    if (!gui->use_optimized_queries || !gui->optimized_dw) return;
+
+    if (strlen(gui->country_input) >= 2) {  // Mínimo 2 caracteres
+        int result_count = 0;
+        char **suggestions = optimized_autocomplete_country(
+            gui->optimized_dw, gui->country_input, &result_count);
+
+        if (suggestions && result_count > 0) {
+            // Mostrar sugestões (implementação simplificada)
+            printf("💡 Sugestões: ");
+            for (int i = 0; i < result_count && i < 5; i++) {
+                printf("%s ", suggestions[i]);
+            }
+            printf("\n");
+
+            // Liberar memória das sugestões
+            for (int i = 0; i < result_count; i++) {
+                free(suggestions[i]);
+            }
+            free(suggestions);
+        }
+    }
+}
+
 // Função para desenhar input de texto
-bool DrawTextInput(Rectangle bounds, const char *label, char *text, int max_length, bool *is_active) {
+bool DrawTextInput(Rectangle bounds, const char *label, char *text, int max_length, bool *is_active, DisasterGUI *gui) {
     Vector2 mouse_pos = GetMousePosition();
     bool text_changed = false;
 
@@ -548,6 +725,11 @@ bool DrawTextInput(Rectangle bounds, const char *label, char *text, int max_leng
                 text[strlen(text) + 1] = '\0';
                 text[strlen(text)] = (char)key;
                 text_changed = true;
+
+                // Trigger autocomplete após mudança de texto
+                if (gui && gui->use_optimized_queries) {
+                    HandleCountryAutocomplete(gui);
+                }
             }
             key = GetCharPressed();
         }
@@ -556,6 +738,11 @@ bool DrawTextInput(Rectangle bounds, const char *label, char *text, int max_leng
         if (IsKeyPressed(KEY_BACKSPACE) && strlen(text) > 0) {
             text[strlen(text) - 1] = '\0';
             text_changed = true;
+
+            // Trigger autocomplete após mudança de texto
+                if (gui->use_optimized_queries) {
+                    HandleCountryAutocomplete(gui);
+                }
         }
     }
 
@@ -714,6 +901,72 @@ for (int i = 0; i < gui->disaster_type_count && i < 35; i++) {
     gui->country_input_active = false;
 }
 
+// Função para inicializar sistema de índices otimizado
+int InitializeOptimizedSystem(DisasterGUI *gui, DataWarehouse *dw) {
+    if (!gui || !dw) return 0;
+
+    printf("🔧 Inicializando sistema de índices otimizado...\n");
+
+    // Criar configuração otimizada
+    IndexConfiguration *config = index_config_create_high_performance();
+    if (!config) {
+        printf("❌ Erro ao criar configuração de índices\n");
+        return 0;
+    }
+
+    // Criar data warehouse otimizado
+    gui->optimized_dw = optimized_dw_create_with_config(config);
+    if (!gui->optimized_dw) {
+        printf("❌ Erro ao criar data warehouse otimizado\n");
+        index_config_destroy(config);
+        return 0;
+    }
+
+    // Associar data warehouse original
+    gui->optimized_dw->dw = dw;
+
+    // Construir todos os índices
+    printf("⚙️ Construindo índices...\n");
+    clock_t start_time = clock();
+
+    if (index_system_build_all(gui->optimized_dw->indexes) != 0) {
+        printf("❌ Erro ao construir índices\n");
+        optimized_dw_destroy(gui->optimized_dw);
+        gui->optimized_dw = NULL;
+        index_config_destroy(config);
+        return 0;
+    }
+
+    clock_t end_time = clock();
+    double build_time = ((double)(end_time - start_time)) / CLOCKS_PER_SEC;
+
+    printf("✅ Sistema de índices inicializado com sucesso!\n");
+    printf("📊 Tempo de construção: %.3f segundos\n", build_time);
+    printf("📈 Índices criados para %d registros\n", dw->fact_count);
+
+    // Imprimir estatísticas dos índices
+    index_print_statistics(gui->optimized_dw->indexes);
+
+    gui->use_optimized_queries = true;
+    index_config_destroy(config);
+
+    return 1;
+}
+
+//Limpeza dos Índices
+void CleanupOptimizedSystem(DisasterGUI *gui) {
+    if (gui && gui->optimized_dw) {
+        printf("🧹 Limpando sistema de índices...\n");
+
+        // Salvar índices antes de destruir (opcional)
+        // optimized_dw_save(gui->optimized_dw, "indexes");
+
+        optimized_dw_destroy(gui->optimized_dw);
+        gui->optimized_dw = NULL;
+        gui->use_optimized_queries = false;
+    }
+}
+
 // Função para carregar dados originais e converter para esquema estrela
 int load_and_convert_to_star_schema(const char *binary_filename, DataWarehouse **dw) {
     FILE *file = fopen(binary_filename, "rb");
@@ -782,6 +1035,14 @@ int main() {
 
         LoadDataFromStarSchema(gui, dw);
 
+         // Inicializar sistema de índices otimizado
+        if (InitializeOptimizedSystem(gui, dw)) {
+            printf("🚀 Sistema otimizado ativo - consultas serão aceleradas!\n");
+        } else {
+            printf("⚠️ Sistema otimizado não disponível - usando consultas convencionais\n");
+            gui->use_optimized_queries = false;
+        }
+
 //**DEBUGGIN QUANTOS REGISTROS CHEGAM ATÉ A GUI:
     printf("GUI Disaster Count: %d\n", gui->disaster_count);
     printf("GUI Country Count: %d\n", gui->country_count);
@@ -811,9 +1072,10 @@ int main() {
         // Dividir tela em seções
         Rectangle header_rect = {0, 0, SCREEN_WIDTH, 60};
         Rectangle filter_rect = {0, 60, SCREEN_WIDTH, 140};
-        Rectangle chart_rect = {0, 200, SCREEN_WIDTH/2, 250};  // Altura fixa menor
-        Rectangle stats_rect = {SCREEN_WIDTH/2, 200, SCREEN_WIDTH/2, 250};  // Altura fixa menor
-        Rectangle table_rect = {0, 450, SCREEN_WIDTH, SCREEN_HEIGHT - 450};  // Resto da tela para tabela
+        Rectangle chart_rect = {SCREEN_WIDTH/2, 150, SCREEN_WIDTH/2, 300};
+        Rectangle stats_rect = {0, 150, SCREEN_WIDTH/2 - 600, 300};
+        Rectangle table_rect = {0, 450, SCREEN_WIDTH, SCREEN_HEIGHT - 450};
+        Rectangle disaster_types_rect = {SCREEN_WIDTH/2 - 600, 150, 600, 300};
 
         // Desenhar componentes
         DrawApplicationHeader(header_rect);
@@ -821,6 +1083,7 @@ int main() {
         DrawBarChart(chart_rect, gui->country_stats, gui->country_stats_count);
         DrawDetailedStatsPanel(stats_rect, gui);
         DrawDataTable(table_rect, gui->filtered_disasters, gui->filtered_count, &gui->table_scroll_y);
+        DrawDisasterTypeList(disaster_types_rect, gui, &filters_changed);
 
         // Atualizar dados filtrados se necessário
         if (filters_changed) {
@@ -829,6 +1092,9 @@ int main() {
 
         EndDrawing();
     }
+
+    // Limpar sistema otimizado
+    CleanupOptimizedSystem(gui);
 
     // Limpeza
     CleanupGUI(gui);

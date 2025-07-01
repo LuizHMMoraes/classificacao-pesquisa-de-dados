@@ -525,33 +525,39 @@ void dw_print_sample_data(DataWarehouse *dw, int sample_size) {
 // FUNÇÃO DE CONVERSÃO DE DADOS ORIGINAIS
 // =============================================================================
 
+// Se não existir, adicione esta implementação:
 int dw_convert_from_original(DataWarehouse *dw, OriginalDisaster *original) {
     if (!dw || !original) return 0;
 
-    // Busca ou cria dimensão tempo
+    // 1. Inserir/Encontrar dimensão tempo
     int time_key = dw_find_time_key(dw, original->start_year, original->start_month, original->start_day);
     if (time_key == -1) {
-        time_key = dw_insert_time_dimension(dw, original->start_year, original->start_month, original->start_day,
-                                           original->end_year, original->end_month, original->end_day);
+        time_key = dw_insert_time_dimension(dw,
+            original->start_year, original->start_month, original->start_day,
+            original->end_year, original->end_month, original->end_day);
+        if (time_key == -1) return 0;
     }
 
-    // Busca ou cria dimensão geografia
+    // 2. Inserir/Encontrar dimensão geografia
     int geography_key = dw_find_geography_key(dw, original->country);
     if (geography_key == -1) {
-        geography_key = dw_insert_geography_dimension(dw, original->country, original->subregion, original->region);
+        geography_key = dw_insert_geography_dimension(dw,
+            original->country, original->subregion, original->region);
+        if (geography_key == -1) return 0;
     }
 
-    // Busca ou cria dimensão tipo de desastre
+    // 3. Inserir/Encontrar dimensão tipo de desastre
     int disaster_type_key = dw_find_disaster_type_key(dw, original->disaster_type);
     if (disaster_type_key == -1) {
-        disaster_type_key = dw_insert_disaster_type_dimension(dw, original->disaster_group,
-                                                             original->disaster_subgroup, original->disaster_type,
-                                                             original->disaster_subtype);
+        disaster_type_key = dw_insert_disaster_type_dimension(dw,
+            original->disaster_group, original->disaster_subgroup,
+            original->disaster_type, original->disaster_subtype);
+        if (disaster_type_key == -1) return 0;
     }
 
-    // Insere fato
+    // 4. Inserir fato
     int fact_id = dw_insert_fact(dw, time_key, geography_key, disaster_type_key,
-                                original->total_deaths, original->total_affected, original->total_damage);
+        original->total_deaths, original->total_affected, original->total_damage);
 
-    return (fact_id != -1);
+    return (fact_id != -1) ? 1 : 0;
 }

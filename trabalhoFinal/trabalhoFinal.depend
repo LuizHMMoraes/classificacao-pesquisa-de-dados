@@ -12,7 +12,7 @@
 	<stdlib.h>
 	<string.h>
 
-1751223528 source:/home/luiz/Desktop/CPD/trabalhoFinal/disaster_star_schema.c
+1751316064 source:/home/luiz/Desktop/CPD/trabalhoFinal/disaster_star_schema.c
 	"disaster_star_schema.h"
 	<stdio.h>
 	<stdlib.h>
@@ -23,7 +23,7 @@
 	<stdlib.h>
 	<string.h>
 
-1751234073 source:/home/luiz/Desktop/CPD/trabalhoFinal/main.c
+1751332376 source:/home/luiz/Desktop/CPD/trabalhoFinal/main.c
 	<raylib.h>
 	<stdio.h>
 	<stdlib.h>
@@ -31,10 +31,12 @@
 	<math.h>
 	<stdbool.h>
 	<time.h>
+	<ctype.h>
 	"disaster.h"
 	"disaster_star_schema.h"
 	"bplus.h"
 	"trie.h"
+	"star_schema_indexes.h"
 
 1751144708 /home/luiz/Desktop/CPD/trabalhoFinal/trie.h
 
@@ -63,5 +65,19 @@
 
 1721080461 /home/luiz/raylib/src/raylib.h
 	<stdarg.h>
+	<stdbool.h>
+
+1751310136 source:/home/luiz/Desktop/CPD/trabalhoFinal/star_schema_indexes.c
+	"star_schema_indexes.h"
+	<string.h>
+	<math.h>
+	<stdbool.h>
+	<limits.h>
+
+1751310080 /home/luiz/Desktop/CPD/trabalhoFinal/star_schema_indexes.h
+	"disaster_star_schema.h"
+	"bplus.h"
+	"trie.h"
+	<time.h>
 	<stdbool.h>
 

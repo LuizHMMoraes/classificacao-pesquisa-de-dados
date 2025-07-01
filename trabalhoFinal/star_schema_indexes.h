@@ -8,6 +8,7 @@
 #include "bplus.h"
 #include "trie.h"
 #include <time.h>
+#include <stdbool.h>
 
 // =============================================================================
 // ESTRUTURA PRINCIPAL DE ÍNDICES
