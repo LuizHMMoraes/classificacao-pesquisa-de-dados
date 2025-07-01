@@ -123,82 +123,164 @@ void CleanupGUI(DisasterGUI *gui) {
     free(gui);
 }
 
-// Aplicar filtros aos dados
+// Função para inicializar sistema otimizado
+int InitializeOptimizedSystem(DisasterGUI *gui, DataWarehouse *dw) {
+    if (!gui || !dw) return 0;
+
+    printf("Inicializando sistema de índices otimizado...\n");
+
+    // Criar configuração otimizada
+    IndexConfiguration *config = index_config_create_high_performance();
+    if (!config) {
+        printf("Erro ao criar configuração de índices\n");
+        return 0;
+    }
+
+    // Verificar se há dados suficientes
+    if (dw->fact_count == 0) {
+        printf("Nenhum dado disponível para indexar\n");
+        index_config_destroy(config);
+        return 0;
+    }
+
+    // Criar data warehouse otimizado
+    gui->optimized_dw = optimized_dw_create_with_config(config);
+    if (!gui->optimized_dw) {
+        printf("Erro ao criar data warehouse otimizado\n");
+        index_config_destroy(config);
+        return 0;
+    }
+
+    // Associar data warehouse original corretamente
+    gui->optimized_dw->dw = dw;
+    gui->optimized_dw->indexes->dw = dw;
+
+    // Construir todos os índices
+    printf("Construindo índices para %d registros...\n", dw->fact_count);
+    clock_t start_time = clock();
+
+    if (index_system_build_all(gui->optimized_dw->indexes) != 1) {
+        printf("Erro ao construir índices\n");
+        optimized_dw_destroy(gui->optimized_dw);
+        gui->optimized_dw = NULL;
+        index_config_destroy(config);
+        return 0;
+    }
+
+    clock_t end_time = clock();
+    double build_time = ((double)(end_time - start_time)) / CLOCKS_PER_SEC;
+
+    printf("Sistema de índices inicializado com sucesso!\n");
+    printf("Tempo de construção: %.3f segundos\n", build_time);
+    printf("Índices criados para %d registros\n", dw->fact_count);
+
+    // Verificar integridade dos índices
+    if (!index_verify_integrity(gui->optimized_dw->indexes)) {
+        printf("Problemas de integridade detectados nos índices\n");
+    }
+
+    // Imprimir estatísticas dos índices
+    index_print_statistics(gui->optimized_dw->indexes);
+
+    gui->use_optimized_queries = true;
+    index_config_destroy(config);
+
+    return 1;
+}
+
+// Função melhorada para aplicar filtros
 void ApplyFilters(DisasterGUI *gui) {
     if (!gui || !gui->disasters) return;
+
+    clock_t start_time = clock();
 
     gui->filtered_count = 0;
     gui->total_affected_filtered = 0;
     gui->total_deaths_filtered = 0;
     gui->total_damage_filtered = 0;
 
-    // Se temos sistema otimizado e consulta simples, usar índices
-    if (gui->use_optimized_queries && gui->optimized_dw) {
+    // Usar índices otimizados quando disponível e apropriado
+    if (gui->use_optimized_queries && gui->optimized_dw &&
+        gui->optimized_dw->indexes && strlen(gui->country_input) > 0) {
+
+        printf("Usando consulta otimizada para país: '%s'\n", gui->country_input);
+
         int *result_ids = NULL;
         int result_count = 0;
 
-        // Consulta otimizada por país
-        if (strlen(gui->country_input) > 0) {
-            result_ids = optimized_query_by_country(gui->optimized_dw,
-                                                   gui->country_input,
-                                                   &result_count);
+        // Busca otimizada por país
+        result_ids = optimized_query_by_country(gui->optimized_dw,
+                                               gui->country_input,
+                                               &result_count);
 
-            if (result_ids && result_count > 0) {
-                printf("🚀 Consulta otimizada retornou %d resultados\n", result_count);
+        if (result_ids && result_count > 0) {
+            printf("Consulta otimizada retornou %d resultados\n", result_count);
 
-                // Copiar resultados usando os IDs dos fatos
-                for (int i = 0; i < result_count && gui->filtered_count < MAX_DISASTERS; i++) {
-                    int fact_id = result_ids[i];
-                    if (fact_id >= 0 && fact_id < gui->disaster_count) {
-                        DisasterRecord *record = &gui->disasters[fact_id];
+            // Aplicar filtros adicionais aos resultados otimizados
+            for (int i = 0; i < result_count && gui->filtered_count < MAX_DISASTERS; i++) {
+                int fact_id = result_ids[i];
 
-                        // Aplicar filtros adicionais
-                        bool include = true;
+                // Verificar bounds do array
+                if (fact_id >= 0 && fact_id < gui->disaster_count) {
+                    DisasterRecord *record = &gui->disasters[fact_id];
+                    bool include = true;
 
-                        // Filtro por tipo de desastre
-                        if (gui->selected_disaster_type > 0) {
-                            if (strcmp(record->disaster_type,
-                                     gui->disaster_types[gui->selected_disaster_type]) != 0) {
-                                include = false;
-                            }
-                        }
-
-                        // Filtro por ano
-                        if (record->start_year < gui->start_year ||
-                            record->start_year > gui->end_year) {
+                    // Filtro por tipo de desastre
+                    if (gui->selected_disaster_type > 0 &&
+                        gui->selected_disaster_type < gui->disaster_type_count) {
+                        if (strcmp(record->disaster_type,
+                                 gui->disaster_types[gui->selected_disaster_type]) != 0) {
                             include = false;
                         }
+                    }
 
-                        if (include) {
-                            gui->filtered_disasters[gui->filtered_count] = *record;
-                            gui->filtered_count++;
-                            gui->total_affected_filtered += record->total_affected;
-                            gui->total_deaths_filtered += record->total_deaths;
-                            gui->total_damage_filtered += record->total_damage;
-                        }
+                    // Filtro por ano
+                    if (record->start_year < gui->start_year ||
+                        record->start_year > gui->end_year) {
+                        include = false;
+                    }
+
+                    if (include) {
+                        gui->filtered_disasters[gui->filtered_count] = *record;
+                        gui->filtered_count++;
+                        gui->total_affected_filtered += record->total_affected;
+                        gui->total_deaths_filtered += record->total_deaths;
+                        gui->total_damage_filtered += record->total_damage;
                     }
                 }
-
-                free(result_ids);
             }
+
+            free(result_ids);
+
+            clock_t end_time = clock();
+            double query_time = ((double)(end_time - start_time)) / CLOCKS_PER_SEC;
+            printf("Consulta otimizada executada em %.4f segundos\n", query_time);
         } else {
-            // Fallback para busca convencional se não há filtro de país
-            gui->use_optimized_queries = false;
+            printf("Consulta otimizada não retornou resultados, usando busca convencional\n");
+            gui->use_optimized_queries = false; // Fallback temporário
         }
     }
 
     // Consulta convencional (fallback ou quando não há índices)
     if (!gui->use_optimized_queries || gui->filtered_count == 0) {
+        printf("Usando busca convencional\n");
+
         for (int i = 0; i < gui->disaster_count; i++) {
             DisasterRecord *record = &gui->disasters[i];
             bool include = true;
 
-            // Filtro por país usando input de texto
+            // Filtro por país usando input de texto (busca parcial)
             if (strlen(gui->country_input) > 0) {
                 char country_lower[50], input_lower[50];
-                strcpy(country_lower, record->country);
-                strcpy(input_lower, gui->country_input);
 
+                // Verificar bounds antes de copiar
+                strncpy(country_lower, record->country, sizeof(country_lower) - 1);
+                country_lower[sizeof(country_lower) - 1] = '\0';
+
+                strncpy(input_lower, gui->country_input, sizeof(input_lower) - 1);
+                input_lower[sizeof(input_lower) - 1] = '\0';
+
+                // Converter para minúsculo para busca case-insensitive
                 for (int j = 0; country_lower[j]; j++) {
                     country_lower[j] = tolower(country_lower[j]);
                 }
@@ -212,7 +294,8 @@ void ApplyFilters(DisasterGUI *gui) {
             }
 
             // Filtro por tipo de desastre
-            if (gui->selected_disaster_type > 0) {
+            if (gui->selected_disaster_type > 0 &&
+                gui->selected_disaster_type < gui->disaster_type_count) {
                 if (strcmp(record->disaster_type,
                          gui->disaster_types[gui->selected_disaster_type]) != 0) {
                     include = false;
@@ -225,7 +308,7 @@ void ApplyFilters(DisasterGUI *gui) {
                 include = false;
             }
 
-            if (include) {
+            if (include && gui->filtered_count < MAX_DISASTERS) {
                 gui->filtered_disasters[gui->filtered_count] = *record;
                 gui->filtered_count++;
                 gui->total_affected_filtered += record->total_affected;
@@ -233,9 +316,13 @@ void ApplyFilters(DisasterGUI *gui) {
                 gui->total_damage_filtered += record->total_damage;
             }
         }
+
+        clock_t end_time = clock();
+        double query_time = ((double)(end_time - start_time)) / CLOCKS_PER_SEC;
+        printf("Busca convencional executada em %.4f segundos\n", query_time);
     }
 
-    // Calcular estatísticas por país
+    // Calcular estatísticas por país para gráfico
     gui->country_stats_count = 0;
     for (int i = 0; i < gui->filtered_count && gui->country_stats_count < MAX_COUNTRIES; i++) {
         DisasterRecord *record = &gui->filtered_disasters[i];
@@ -248,27 +335,55 @@ void ApplyFilters(DisasterGUI *gui) {
             }
         }
 
-        if (country_idx == -1) {
-            strcpy(gui->country_stats[gui->country_stats_count].country, record->country);
+        if (country_idx == -1 && gui->country_stats_count < MAX_COUNTRIES) {
+            strncpy(gui->country_stats[gui->country_stats_count].country,
+                   record->country, sizeof(gui->country_stats[0].country) - 1);
+            gui->country_stats[gui->country_stats_count].country[sizeof(gui->country_stats[0].country) - 1] = '\0';
             gui->country_stats[gui->country_stats_count].total_affected = record->total_affected;
             gui->country_stats[gui->country_stats_count].disaster_count = 1;
             gui->country_stats_count++;
-        } else {
+        } else if (country_idx != -1) {
             gui->country_stats[country_idx].total_affected += record->total_affected;
             gui->country_stats[country_idx].disaster_count++;
         }
     }
+
+    printf("Filtros aplicados: %d registros encontrados\n", gui->filtered_count);
 }
 
 bool DrawDropdown(Rectangle bounds, const char *label, char options[][50], int option_count, int *selected, bool *open);
 bool DrawTextInput(Rectangle bounds, const char *label, char *text, int max_length, bool *is_active, DisasterGUI *gui);
-void HandleCountryAutocomplete(DisasterGUI *gui);
+
+// Função melhorada para autocomplete
+void HandleCountryAutocomplete(DisasterGUI *gui) {
+    if (!gui->use_optimized_queries || !gui->optimized_dw) return;
+
+    if (strlen(gui->country_input) >= 2) {  // Mínimo 2 caracteres
+        int result_count = 0;
+        char **suggestions = optimized_autocomplete_country(
+            gui->optimized_dw, gui->country_input, &result_count);
+
+        if (suggestions && result_count > 0) {
+            printf("Sugestões de países para '%s': ", gui->country_input);
+            for (int i = 0; i < result_count && i < 5; i++) {
+                printf("'%s' ", suggestions[i]);
+            }
+            printf("\n");
+
+            // Liberar memória das sugestões corretamente
+            for (int i = 0; i < result_count; i++) {
+                free(suggestions[i]);
+            }
+            free(suggestions);
+        }
+    }
+}
 
 // Desenhar cabeçalho da aplicação
 void DrawApplicationHeader(Rectangle bounds) {
     DrawRectangleRec(bounds, PRIMARY_COLOR);
-    DrawText("Disaster Analysis Dashboard", bounds.x + 20, bounds.y + 15, 24, WHITE);
-    DrawText("Data Warehouse System", bounds.x + 20, bounds.y + 35, 14, (Color){200, 200, 200, 255});
+    DrawText("Disaster Analysis Dashboard - Sistema de Índices Otimizado", bounds.x + 20, bounds.y + 15, 24, WHITE);
+    DrawText("Data Warehouse System with High-Performance Indexes", bounds.x + 20, bounds.y + 35, 14, (Color){200, 200, 200, 255});
 }
 
 // Desenhar controles de filtro
@@ -288,6 +403,11 @@ void DrawFilterControls(Rectangle bounds, DisasterGUI *gui, bool *filters_change
 
     DrawText("End Year:", bounds.x + 450, bounds.y + 20, 14, TEXT_COLOR);
     DrawText(TextFormat("%d", gui->end_year), bounds.x + 450, bounds.y + 45, 14, TEXT_COLOR);
+
+    // Status do sistema de índices
+    const char *index_status = gui->use_optimized_queries ? "Índices Ativos" : "Busca Linear";
+    Color status_color = gui->use_optimized_queries ? SECONDARY_COLOR : ACCENT_COLOR;
+    DrawText(index_status, bounds.x + 580, bounds.y + 45, 14, status_color);
 }
 
 // Função para comparar CountryStats para ordenação (maior para menor)
@@ -402,6 +522,13 @@ void DrawDetailedStatsPanel(Rectangle bounds, DisasterGUI *gui) {
     }
     DrawText(TextFormat("Total Damage: %s", damage_str),
              bounds.x + 20, bounds.y + y_offset, 14, TEXT_COLOR);
+    y_offset += line_height;
+
+    // Status de performance
+    const char *perf_text = gui->use_optimized_queries ?
+                           "High Performance Mode" : "Standard Mode";
+    Color perf_color = gui->use_optimized_queries ? SECONDARY_COLOR : ACCENT_COLOR;
+    DrawText(perf_text, bounds.x + 20, bounds.y + y_offset, 12, perf_color);
 }
 
 // Desenhar lista de tipos de desastre clicáveis
@@ -502,8 +629,8 @@ void DrawDataTable(Rectangle bounds, DisasterRecord *records, int count, int *sc
         return;
     }
 
-    // Definir larguras das colunas para ocupar toda a tela
-    float col_widths[] = {120, 120, 120, 120, 180, 120, 120, 80, 80, 80, 80, 80, 80, 100, 120, 140}; // 16 colunas
+    //Larguras das colunas para ocupar toda a tela
+    float col_widths[] = {110, 140, 140, 140, 200, 150, 80, 80, 80, 80, 80, 80, 80, 100, 100, 100}; // 16 colunas
     float total_width = 0;
     for (int i = 0; i < 16; i++) {
         total_width += col_widths[i];
@@ -668,32 +795,6 @@ bool DrawDropdown(Rectangle bounds, const char *text, char items[][50],
     return pressed;
 }
 
-// Função para autocomplete de países usando índices
-void HandleCountryAutocomplete(DisasterGUI *gui) {
-    if (!gui->use_optimized_queries || !gui->optimized_dw) return;
-
-    if (strlen(gui->country_input) >= 2) {  // Mínimo 2 caracteres
-        int result_count = 0;
-        char **suggestions = optimized_autocomplete_country(
-            gui->optimized_dw, gui->country_input, &result_count);
-
-        if (suggestions && result_count > 0) {
-            // Mostrar sugestões (implementação simplificada)
-            printf("💡 Sugestões: ");
-            for (int i = 0; i < result_count && i < 5; i++) {
-                printf("%s ", suggestions[i]);
-            }
-            printf("\n");
-
-            // Liberar memória das sugestões
-            for (int i = 0; i < result_count; i++) {
-                free(suggestions[i]);
-            }
-            free(suggestions);
-        }
-    }
-}
-
 // Função para desenhar input de texto
 bool DrawTextInput(Rectangle bounds, const char *label, char *text, int max_length, bool *is_active, DisasterGUI *gui) {
     Vector2 mouse_pos = GetMousePosition();
@@ -740,9 +841,9 @@ bool DrawTextInput(Rectangle bounds, const char *label, char *text, int max_leng
             text_changed = true;
 
             // Trigger autocomplete após mudança de texto
-                if (gui->use_optimized_queries) {
-                    HandleCountryAutocomplete(gui);
-                }
+            if (gui && gui->use_optimized_queries) {
+                HandleCountryAutocomplete(gui);
+            }
         }
     }
 
@@ -764,6 +865,7 @@ bool DrawTextInput(Rectangle bounds, const char *label, char *text, int max_leng
 // Função para converter dados do esquema estrela para GUI
 void LoadDataFromStarSchema(DisasterGUI *gui, DataWarehouse *dw) {
     if (!dw || dw->fact_count == 0) {
+        printf("Nenhum dado disponível no data warehouse\n");
         return;
     }
 
@@ -772,8 +874,11 @@ void LoadDataFromStarSchema(DisasterGUI *gui, DataWarehouse *dw) {
     gui->filtered_disasters = malloc(MAX_DISASTERS * sizeof(DisasterRecord));
 
     if (!gui->disasters || !gui->filtered_disasters) {
+        printf("Erro ao alocar memória para dados da GUI\n");
         return;
     }
+
+    printf("Convertendo %d fatos do esquema estrela para GUI...\n", dw->fact_count);
 
     // Converte cada fato para formato da GUI
     for (int i = 0; i < dw->fact_count; i++) {
@@ -809,9 +914,35 @@ void LoadDataFromStarSchema(DisasterGUI *gui, DataWarehouse *dw) {
             }
         }
 
-        // Preenche dados do registro
-        strcpy(record->country, geo_dim ? geo_dim->country : "Unknown");
-        strcpy(record->disaster_type, type_dim ? type_dim->disaster_type : "Unknown");
+        // Preenche dados do registro com validação
+        if (geo_dim) {
+            strncpy(record->country, geo_dim->country, sizeof(record->country) - 1);
+            record->country[sizeof(record->country) - 1] = '\0';
+            strncpy(record->region, geo_dim->region, sizeof(record->region) - 1);
+            record->region[sizeof(record->region) - 1] = '\0';
+            strncpy(record->subregion, geo_dim->subregion, sizeof(record->subregion) - 1);
+            record->subregion[sizeof(record->subregion) - 1] = '\0';
+        } else {
+            strcpy(record->country, "Unknown");
+            strcpy(record->region, "Unknown");
+            strcpy(record->subregion, "Unknown");
+        }
+
+        if (type_dim) {
+            strncpy(record->disaster_type, type_dim->disaster_type, sizeof(record->disaster_type) - 1);
+            record->disaster_type[sizeof(record->disaster_type) - 1] = '\0';
+            strncpy(record->disaster_group, type_dim->disaster_group, sizeof(record->disaster_group) - 1);
+            record->disaster_group[sizeof(record->disaster_group) - 1] = '\0';
+            strncpy(record->disaster_subgroup, type_dim->disaster_subgroup, sizeof(record->disaster_subgroup) - 1);
+            record->disaster_subgroup[sizeof(record->disaster_subgroup) - 1] = '\0';
+            strncpy(record->disaster_subtype, type_dim->disaster_subtype, sizeof(record->disaster_subtype) - 1);
+            record->disaster_subtype[sizeof(record->disaster_subtype) - 1] = '\0';
+        } else {
+            strcpy(record->disaster_type, "Unknown");
+            strcpy(record->disaster_group, "Unknown");
+            strcpy(record->disaster_subgroup, "Unknown");
+            strcpy(record->disaster_subtype, "Unknown");
+        }
 
         record->start_year = time_dim ? time_dim->start_year : 0;
         record->start_month = time_dim ? time_dim->start_month : 1;
@@ -842,19 +973,7 @@ void LoadDataFromStarSchema(DisasterGUI *gui, DataWarehouse *dw) {
         }
     }
 
-//**DEBUG PAÍSES:
-printf("=== UNIQUE EXTRACTION DEBUG ===\n");
-printf("Countries extracted (%d total):\n", gui->country_count);
-for (int i = 0; i < gui->country_count && i < 20; i++) {
-    printf("  %d: '%s'\n", i, gui->countries[i]);
-}
-
-// Também verificar dados brutos
-printf("\nSample of raw disaster records:\n");
-for (int i = 0; i < (gui->disaster_count > 20 ? 20 : gui->disaster_count); i++) {
-    printf("  Record %d: '%s' - '%s' - %d\n",
-           i, gui->disasters[i].country, gui->disasters[i].disaster_type, gui->disasters[i].start_year);
-}
+    printf("Países únicos extraídos: %d\n", gui->country_count);
 
     // Extrair tipos de desastre únicos
     gui->disaster_type_count = 0;
@@ -873,11 +992,7 @@ for (int i = 0; i < (gui->disaster_count > 20 ? 20 : gui->disaster_count); i++) 
         }
     }
 
-//**DEBUG DESASTRES TIPO:
-printf("\nDisaster types extracted (%d total):\n", gui->disaster_type_count);
-for (int i = 0; i < gui->disaster_type_count && i < 35; i++) {
-    printf("  %d: '%s'\n", i, gui->disaster_types[i]);
-}
+    printf("Tipos de desastre únicos extraídos: %d\n", gui->disaster_type_count);
 
     // Encontrar intervalo de anos
     int min_year = 9999, max_year = 0;
@@ -899,94 +1014,33 @@ for (int i = 0; i < gui->disaster_type_count && i < 35; i++) {
     gui->table_scroll_y = 0;
     memset(gui->country_input, 0, sizeof(gui->country_input));
     gui->country_input_active = false;
+
+    printf("Intervalo de anos: %d - %d\n", gui->start_year, gui->end_year);
+    printf("Dados convertidos com sucesso para a GUI\n");
 }
 
-// Função para inicializar sistema de índices otimizado
-int InitializeOptimizedSystem(DisasterGUI *gui, DataWarehouse *dw) {
-    if (!gui || !dw) return 0;
-
-    printf("🔧 Inicializando sistema de índices otimizado...\n");
-
-    // Criar configuração otimizada
-    IndexConfiguration *config = index_config_create_high_performance();
-    if (!config) {
-        printf("❌ Erro ao criar configuração de índices\n");
-        return 0;
-    }
-
-    // Criar data warehouse otimizado
-    gui->optimized_dw = optimized_dw_create_with_config(config);
-    if (!gui->optimized_dw) {
-        printf("❌ Erro ao criar data warehouse otimizado\n");
-        index_config_destroy(config);
-        return 0;
-    }
-
-    // Associar data warehouse original
-    gui->optimized_dw->dw = dw;
-
-    // Construir todos os índices
-    printf("⚙️ Construindo índices...\n");
-    clock_t start_time = clock();
-
-    if (index_system_build_all(gui->optimized_dw->indexes) != 0) {
-        printf("❌ Erro ao construir índices\n");
-        optimized_dw_destroy(gui->optimized_dw);
-        gui->optimized_dw = NULL;
-        index_config_destroy(config);
-        return 0;
-    }
-
-    clock_t end_time = clock();
-    double build_time = ((double)(end_time - start_time)) / CLOCKS_PER_SEC;
-
-    printf("✅ Sistema de índices inicializado com sucesso!\n");
-    printf("📊 Tempo de construção: %.3f segundos\n", build_time);
-    printf("📈 Índices criados para %d registros\n", dw->fact_count);
-
-    // Imprimir estatísticas dos índices
-    index_print_statistics(gui->optimized_dw->indexes);
-
-    gui->use_optimized_queries = true;
-    index_config_destroy(config);
-
-    return 1;
-}
-
-//Limpeza dos Índices
-void CleanupOptimizedSystem(DisasterGUI *gui) {
-    if (gui && gui->optimized_dw) {
-        printf("🧹 Limpando sistema de índices...\n");
-
-        // Salvar índices antes de destruir (opcional)
-        // optimized_dw_save(gui->optimized_dw, "indexes");
-
-        optimized_dw_destroy(gui->optimized_dw);
-        gui->optimized_dw = NULL;
-        gui->use_optimized_queries = false;
-    }
-}
-
-// Função para carregar dados originais e converter para esquema estrela
+// Função para carregar dados
 int load_and_convert_to_star_schema(const char *binary_filename, DataWarehouse **dw) {
     FILE *file = fopen(binary_filename, "rb");
     if (!file) {
+        printf("Erro ao abrir arquivo: %s\n", binary_filename);
         return 0;
     }
 
     // Lê o número total de registros
     int total_records;
     if (fread(&total_records, sizeof(int), 1, file) != 1) {
+        printf("Erro ao ler número de registros\n");
         fclose(file);
         return 0;
     }
 
-//**DEBUGGIN TOTAL RECORDS:
-    printf("Total records in file: %d\n", total_records);
+    printf("Arquivo contém %d registros\n", total_records);
 
     // Cria o data warehouse
     *dw = dw_create();
     if (!*dw) {
+        printf("Erro ao criar data warehouse\n");
         fclose(file);
         return 0;
     }
@@ -994,22 +1048,69 @@ int load_and_convert_to_star_schema(const char *binary_filename, DataWarehouse *
     // Lê cada registro original e converte
     OriginalDisaster disaster;
     int converted_count = 0;
+    int error_count = 0;
+
+    printf("Convertendo registros para esquema estrela...\n");
 
     for (int i = 0; i < total_records; i++) {
         if (fread(&disaster, sizeof(OriginalDisaster), 1, file) == 1) {
-            if (dw_convert_from_original(*dw, &disaster)) {
-                converted_count++;
+            // Validar dados antes de converter
+            if (strlen(disaster.country) > 0 && strlen(disaster.disaster_type) > 0 &&
+                disaster.start_year > 1900 && disaster.start_year < 2030) {
+
+                if (dw_convert_from_original(*dw, &disaster)) {
+                    converted_count++;
+                } else {
+                    error_count++;
+                }
+            } else {
+                error_count++;
             }
         } else {
+            printf("Erro ao ler registro %d\n", i);
             break;
+        }
+
+        // Mostrar progresso a cada 1000 registros
+        if ((i + 1) % 1000 == 0) {
+            printf("Processados %d/%d registros (%.1f%%)\n",
+                   i + 1, total_records, ((float)(i + 1) / total_records) * 100);
         }
     }
 
-//**DEBUGGIN REGISTROS CONVERTIDOS COM SUCESSO:
-    printf("Successfully converted: %d out of %d records\n", converted_count, total_records);
-
     fclose(file);
+
+    printf("Conversão concluída:\n");
+    printf("   - Registros convertidos: %d\n", converted_count);
+    printf("   - Erros encontrados: %d\n", error_count);
+    printf("   - Taxa de sucesso: %.1f%%\n",
+           total_records > 0 ? ((float)converted_count / total_records) * 100 : 0);
+
+    // Imprimir estatísticas detalhadas do data warehouse
+    if (converted_count > 0) {
+        dw_print_statistics(*dw);
+    }
+
     return converted_count > 0 ? 1 : 0;
+}
+
+// Limpeza dos Índices
+void CleanupOptimizedSystem(DisasterGUI *gui) {
+    if (gui && gui->optimized_dw) {
+        printf("Limpando sistema de índices...\n");
+
+        // Limpeza do cache
+        if (gui->optimized_dw->cache) {
+            cache_cleanup_expired(gui->optimized_dw->cache);
+            cache_print_statistics(gui->optimized_dw->cache);
+        }
+
+        optimized_dw_destroy(gui->optimized_dw);
+        gui->optimized_dw = NULL;
+        gui->use_optimized_queries = false;
+
+        printf("Sistema de índices limpo com sucesso\n");
+    }
 }
 
 // Função principal
@@ -1019,48 +1120,67 @@ int main() {
     DisasterGUI *gui = InitializeGUI();
 
     if (!gui) {
+        printf("Erro ao inicializar interface gráfica\n");
         return -1;
     }
 
-    // Tentar carregar dados originais e converter para esquema estrela
+    printf("Iniciando Disaster Analysis Dashboard\n");
+    printf("Procurando arquivo: %s\n", binary_filename);
+
+    // Tenta carregar dados originais e converter para esquema estrela
     if (load_and_convert_to_star_schema(binary_filename, &dw)) {
-        printf("✅ Dados carregados do arquivo binário com sucesso\n");
+        printf("Dados carregados com sucesso do arquivo binário\n");
 
-//**DEBUGGIN REGISTROS LIDOS COM SUCESSO:
-    printf("=== DEBUG INFO ===\n");
-    printf("DataWarehouse Facts: %d\n", dw->fact_count);
-    printf("Geography Dimensions: %d\n", dw->geography_count);
-    printf("Disaster Type Dimensions: %d\n", dw->disaster_type_count);
-    printf("Time Dimensions: %d\n", dw->time_count);
+        // Verifica se os dados foram carregados corretamente
+        if (!dw || dw->fact_count == 0) {
+            printf("Nenhum dado válido foi carregado\n");
+            CleanupGUI(gui);
+            if (dw) dw_destroy(dw);
+            return -1;
+        }
 
+        printf("=== ESTATÍSTICAS DOS DADOS CARREGADOS ===\n");
+        printf("Facts: %d\n", dw->fact_count);
+        printf("Dimensões geográficas: %d\n", dw->geography_count);
+        printf("Tipos de desastre: %d\n", dw->disaster_type_count);
+        printf("Dimensões temporais: %d\n", dw->time_count);
+
+        // Carrega dados na GUI
         LoadDataFromStarSchema(gui, dw);
 
-         // Inicializar sistema de índices otimizado
+        printf("=== DADOS NA INTERFACE ===\n");
+        printf("Registros na GUI: %d\n", gui->disaster_count);
+        printf("Países únicos: %d\n", gui->country_count);
+        printf("Tipos de desastre únicos: %d\n", gui->disaster_type_count);
+        printf("Intervalo de anos: %d - %d\n", gui->start_year, gui->end_year);
+
+        // Tenta inicializar sistema de índices
         if (InitializeOptimizedSystem(gui, dw)) {
-            printf("🚀 Sistema otimizado ativo - consultas serão aceleradas!\n");
+            printf("Sistema otimizado ativo - consultas aceleradas!\n");
         } else {
-            printf("⚠️ Sistema otimizado não disponível - usando consultas convencionais\n");
+            printf("Sistema otimizado não disponível - usando consultas convencionais\n");
             gui->use_optimized_queries = false;
         }
 
-//**DEBUGGIN QUANTOS REGISTROS CHEGAM ATÉ A GUI:
-    printf("GUI Disaster Count: %d\n", gui->disaster_count);
-    printf("GUI Country Count: %d\n", gui->country_count);
-    printf("GUI Disaster Type Count: %d\n", gui->disaster_type_count);
-    printf("Year Range: %d - %d\n", gui->start_year, gui->end_year);
-    printf("==================\n");
-
     } else {
-        printf("⚠️ Arquivo binário não encontrado\n");
-        // Usar implementação do disaster_gui.c
+        printf("Arquivo binário não encontrado ou corrompido\n");
+        printf("Certifique-se de que o arquivo %s existe e está no formato correto\n", binary_filename);
+
+        // Não prosseguir sem dados
+        CleanupGUI(gui);
+        return -1;
     }
 
     // Inicializa interface gráfica
-    InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Disaster Analysis Dashboard");
+    printf("Inicializando interface gráfica...\n");
+    InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Disaster Analysis Dashboard - Sistema de Índices Otimizado");
     SetTargetFPS(60);
 
     // Aplica filtros iniciais
+    printf("Aplicando filtros iniciais...\n");
     ApplyFilters(gui);
+
+    printf("Sistema pronto! Interface carregada com %d registros filtrados\n", gui->filtered_count);
 
     // Loop principal da interface
     while (!WindowShouldClose()) {
@@ -1069,7 +1189,7 @@ int main() {
         BeginDrawing();
         ClearBackground(BACKGROUND_COLOR);
 
-        // Dividir tela em seções
+        // Divide tela em seções
         Rectangle header_rect = {0, 0, SCREEN_WIDTH, 60};
         Rectangle filter_rect = {0, 60, SCREEN_WIDTH, 140};
         Rectangle chart_rect = {SCREEN_WIDTH/2, 150, SCREEN_WIDTH/2, 300};
@@ -1077,7 +1197,7 @@ int main() {
         Rectangle table_rect = {0, 450, SCREEN_WIDTH, SCREEN_HEIGHT - 450};
         Rectangle disaster_types_rect = {SCREEN_WIDTH/2 - 600, 150, 600, 300};
 
-        // Desenhar componentes
+        // Desenha componentes
         DrawApplicationHeader(header_rect);
         DrawFilterControls(filter_rect, gui, &filters_changed);
         DrawBarChart(chart_rect, gui->country_stats, gui->country_stats_count);
@@ -1085,23 +1205,34 @@ int main() {
         DrawDataTable(table_rect, gui->filtered_disasters, gui->filtered_count, &gui->table_scroll_y);
         DrawDisasterTypeList(disaster_types_rect, gui, &filters_changed);
 
-        // Atualizar dados filtrados se necessário
+        // Atualiza dados filtrados se necessário
         if (filters_changed) {
+            printf("Aplicando novos filtros...\n");
             ApplyFilters(gui);
+        }
+
+        // Limpeza periódica do cache (a cada 5 minutos)
+        static time_t last_cache_cleanup = 0;
+        time_t current_time = time(NULL);
+        if (current_time - last_cache_cleanup > 300) { // 5 minutos
+            if (gui->optimized_dw && gui->optimized_dw->cache) {
+                cache_cleanup_expired(gui->optimized_dw->cache);
+            }
+            last_cache_cleanup = current_time;
         }
 
         EndDrawing();
     }
 
-    // Limpar sistema otimizado
+    // Limpeza final
+    printf("Limpando recursos...\n");
     CleanupOptimizedSystem(gui);
-
-    // Limpeza
     CleanupGUI(gui);
     if (dw) {
         dw_destroy(dw);
     }
     CloseWindow();
 
+    printf("Aplicação encerrada com sucesso!\n");
     return 0;
 }

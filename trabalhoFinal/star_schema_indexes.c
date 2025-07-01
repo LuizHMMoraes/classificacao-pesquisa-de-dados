@@ -1,5 +1,5 @@
 // =============================================================================
-// star_schema_indexes.c - Implementação do sistema de índices
+// star_schema_indexes.c - Implementação completa do sistema de índices
 // =============================================================================
 
 #include "star_schema_indexes.h"
@@ -7,6 +7,7 @@
 #include <math.h>
 #include <stdbool.h>
 #include <limits.h>
+#include <ctype.h>
 
 // =============================================================================
 // IMPLEMENTAÇÃO DO CACHE SYSTEM
@@ -52,7 +53,7 @@ void cache_system_destroy(CacheSystem *cache) {
 }
 
 int* cache_search(CacheSystem *cache, const char *query_key, int *result_count) {
-    if (!cache || !query_key) return NULL;
+    if (!cache || !query_key || !result_count) return NULL;
 
     unsigned int hash = hash_string(query_key);
     CacheEntry *entry = cache->entries[hash];
@@ -66,21 +67,32 @@ int* cache_search(CacheSystem *cache, const char *query_key, int *result_count) 
                 entry->access_count++;
                 *result_count = entry->result_count;
 
-                // Copiar resultados
-                int *results = malloc(entry->result_count * sizeof(int));
-                memcpy(results, entry->results, entry->result_count * sizeof(int));
-                return results;
+                // Verificar se há resultados antes de copiar
+                if (entry->result_count > 0 && entry->results) {
+                    int *results = malloc(entry->result_count * sizeof(int));
+                    if (results) {
+                        memcpy(results, entry->results, entry->result_count * sizeof(int));
+                        return results;
+                    }
+                }
+
+                *result_count = 0;
+                return NULL;
+            } else {
+                // Entrada expirada - marcar como expirada
+                entry->result_count = 0;
             }
         }
         entry = entry->next;
     }
 
     cache->miss_count++;
+    *result_count = 0;
     return NULL;
 }
 
 int cache_insert(CacheSystem *cache, const char *query_key, int *results, int result_count) {
-    if (!cache || !query_key || !results) return 0;
+    if (!cache || !query_key || !results || result_count <= 0) return 0;
 
     unsigned int hash = hash_string(query_key);
 
@@ -297,22 +309,26 @@ IndexSystem* index_system_create_with_config(DataWarehouse *dw, IndexConfigurati
     memset(idx, 0, sizeof(IndexSystem));
     idx->dw = dw;
 
-    // Inicializar tries (simulação - usando arrays simples)
-    idx->country_trie = (Trie*)calloc(1, sizeof(void*));
-    idx->disaster_type_trie = (Trie*)calloc(1, sizeof(void*));
-    idx->region_trie = (Trie*)calloc(1, sizeof(void*));
-    idx->subregion_trie = (Trie*)calloc(1, sizeof(void*));
-    idx->year_country_trie = (Trie*)calloc(1, sizeof(void*));
-    idx->disaster_country_trie = (Trie*)calloc(1, sizeof(void*));
-    idx->year_disaster_trie = (Trie*)calloc(1, sizeof(void*));
+    // Criar Tries reais ao invés de calloc
+    if (config->enable_trie_indexes) {
+        idx->country_trie = trie_create("country_index.dat");
+        idx->disaster_type_trie = trie_create("disaster_type_index.dat");
+        idx->region_trie = trie_create("region_index.dat");
+        idx->subregion_trie = trie_create("subregion_index.dat");
+        idx->year_country_trie = trie_create("year_country_index.dat");
+        idx->disaster_country_trie = trie_create("disaster_country_index.dat");
+        idx->year_disaster_trie = trie_create("year_disaster_index.dat");
+    }
 
-    // Inicializar B+ trees (simulação - usando arrays simples)
-    idx->year_bplus = (BPlusTree*)calloc(1, sizeof(void*));
-    idx->deaths_bplus = (BPlusTree*)calloc(1, sizeof(void*));
-    idx->affected_bplus = (BPlusTree*)calloc(1, sizeof(void*));
-    idx->damage_bplus = (BPlusTree*)calloc(1, sizeof(void*));
-    idx->month_bplus = (BPlusTree*)calloc(1, sizeof(void*));
-    idx->day_bplus = (BPlusTree*)calloc(1, sizeof(void*));
+    // Criar B+ Trees reais ao invés de calloc
+    if (config->enable_bplus_indexes) {
+        idx->year_bplus = bplus_create("year_index.dat");
+        idx->deaths_bplus = bplus_create("deaths_index.dat");
+        idx->affected_bplus = bplus_create("affected_index.dat");
+        idx->damage_bplus = bplus_create("damage_index.dat");
+        idx->month_bplus = bplus_create("month_index.dat");
+        idx->day_bplus = bplus_create("day_index.dat");
+    }
 
     // Inicializar bitmaps
     if (config->enable_bitmap_indexes) {
@@ -329,22 +345,22 @@ IndexSystem* index_system_create_with_config(DataWarehouse *dw, IndexConfigurati
 void index_system_destroy(IndexSystem *idx) {
     if (!idx) return;
 
-    // Liberar tries
-    free(idx->country_trie);
-    free(idx->disaster_type_trie);
-    free(idx->region_trie);
-    free(idx->subregion_trie);
-    free(idx->year_country_trie);
-    free(idx->disaster_country_trie);
-    free(idx->year_disaster_trie);
+    // Liberar Tries reais
+    if (idx->country_trie) trie_destroy(idx->country_trie);
+    if (idx->disaster_type_trie) trie_destroy(idx->disaster_type_trie);
+    if (idx->region_trie) trie_destroy(idx->region_trie);
+    if (idx->subregion_trie) trie_destroy(idx->subregion_trie);
+    if (idx->year_country_trie) trie_destroy(idx->year_country_trie);
+    if (idx->disaster_country_trie) trie_destroy(idx->disaster_country_trie);
+    if (idx->year_disaster_trie) trie_destroy(idx->year_disaster_trie);
 
-    // Liberar B+ trees
-    free(idx->year_bplus);
-    free(idx->deaths_bplus);
-    free(idx->affected_bplus);
-    free(idx->damage_bplus);
-    free(idx->month_bplus);
-    free(idx->day_bplus);
+    // Liberar B+ Trees reais
+    if (idx->year_bplus) bplus_destroy(idx->year_bplus);
+    if (idx->deaths_bplus) bplus_destroy(idx->deaths_bplus);
+    if (idx->affected_bplus) bplus_destroy(idx->affected_bplus);
+    if (idx->damage_bplus) bplus_destroy(idx->damage_bplus);
+    if (idx->month_bplus) bplus_destroy(idx->month_bplus);
+    if (idx->day_bplus) bplus_destroy(idx->day_bplus);
 
     // Liberar bitmaps
     for (int i = 0; i < 200; i++) {
@@ -367,7 +383,9 @@ int index_system_build_all(IndexSystem *idx) {
 
     // Construir índices para cada fato
     for (int i = 0; i < idx->dw->fact_count; i++) {
-        index_system_insert_entry(idx, i);
+        if (!index_system_insert_entry(idx, i)) {
+            printf("Warning: Failed to index fact %d\n", i);
+        }
     }
 
     idx->indexes_loaded = true;
@@ -382,7 +400,7 @@ int index_system_rebuild(IndexSystem *idx) {
 }
 
 int index_system_insert_entry(IndexSystem *idx, int fact_id) {
-    if (!idx || !idx->dw || fact_id >= idx->dw->fact_count) return 0;
+    if (!idx || !idx->dw || fact_id >= idx->dw->fact_count || fact_id < 0) return 0;
 
     DisasterFact *fact = &idx->dw->fact_table[fact_id];
 
@@ -391,6 +409,7 @@ int index_system_insert_entry(IndexSystem *idx, int fact_id) {
     DimGeography *geo_dim = NULL;
     DimDisasterType *type_dim = NULL;
 
+    // Buscar dimensão tempo
     for (int i = 0; i < idx->dw->time_count; i++) {
         if (idx->dw->dim_time[i].time_key == fact->time_key) {
             time_dim = &idx->dw->dim_time[i];
@@ -398,6 +417,7 @@ int index_system_insert_entry(IndexSystem *idx, int fact_id) {
         }
     }
 
+    // Buscar dimensão geografia
     for (int i = 0; i < idx->dw->geography_count; i++) {
         if (idx->dw->dim_geography[i].geography_key == fact->geography_key) {
             geo_dim = &idx->dw->dim_geography[i];
@@ -405,6 +425,7 @@ int index_system_insert_entry(IndexSystem *idx, int fact_id) {
         }
     }
 
+    // Buscar dimensão tipo de desastre
     for (int i = 0; i < idx->dw->disaster_type_count; i++) {
         if (idx->dw->dim_disaster_type[i].disaster_type_key == fact->disaster_type_key) {
             type_dim = &idx->dw->dim_disaster_type[i];
@@ -412,10 +433,69 @@ int index_system_insert_entry(IndexSystem *idx, int fact_id) {
         }
     }
 
-    // Atualizar bitmaps se disponíveis
+    // Inserir nos índices Trie reais
+    if (geo_dim && idx->country_trie) {
+        trie_insert(idx->country_trie, geo_dim->country, fact_id);
+        if (idx->region_trie) {
+            trie_insert(idx->region_trie, geo_dim->region, fact_id);
+        }
+        if (idx->subregion_trie) {
+            trie_insert(idx->subregion_trie, geo_dim->subregion, fact_id);
+        }
+    }
+
+    if (type_dim && idx->disaster_type_trie) {
+        trie_insert(idx->disaster_type_trie, type_dim->disaster_type, fact_id);
+    }
+
+    // Inserir nos índices B+ Tree reais
+    if (time_dim && idx->year_bplus) {
+        bplus_insert(idx->year_bplus, time_dim->start_year, fact_id);
+        if (idx->month_bplus) {
+            bplus_insert(idx->month_bplus, time_dim->start_month, fact_id);
+        }
+        if (idx->day_bplus) {
+            bplus_insert(idx->day_bplus, time_dim->start_day, fact_id);
+        }
+    }
+
+    if (idx->deaths_bplus) {
+        bplus_insert(idx->deaths_bplus, fact->total_deaths, fact_id);
+    }
+    if (idx->affected_bplus) {
+        // Para valores muito grandes, usar hash ou dividir por 1000
+        bplus_insert(idx->affected_bplus, (int)(fact->total_affected / 1000), fact_id);
+    }
+    if (idx->damage_bplus) {
+        bplus_insert(idx->damage_bplus, (int)(fact->total_damage / 1000), fact_id);
+    }
+
+    // Inserir nos índices compostos
+    if (geo_dim && time_dim && idx->year_country_trie) {
+        char composite_key[100];
+        snprintf(composite_key, sizeof(composite_key), "%d_%s",
+                time_dim->start_year, geo_dim->country);
+        trie_insert(idx->year_country_trie, composite_key, fact_id);
+    }
+
+    if (geo_dim && type_dim && idx->disaster_country_trie) {
+        char composite_key[100];
+        snprintf(composite_key, sizeof(composite_key), "%s_%s",
+                type_dim->disaster_type, geo_dim->country);
+        trie_insert(idx->disaster_country_trie, composite_key, fact_id);
+    }
+
+    if (time_dim && type_dim && idx->year_disaster_trie) {
+        char composite_key[100];
+        snprintf(composite_key, sizeof(composite_key), "%d_%s",
+                time_dim->start_year, type_dim->disaster_type);
+        trie_insert(idx->year_disaster_trie, composite_key, fact_id);
+    }
+
+    // Atualizar bitmaps
     if (time_dim && time_dim->start_year >= 1970 && time_dim->start_year < 2170) {
         int year_index = time_dim->start_year - 1970;
-        if (year_index >= 0 && year_index < 200) {
+        if (year_index >= 0 && year_index < 200 && idx->year_bitmap[year_index]) {
             bitmap_set_bit(idx->year_bitmap[year_index], fact_id);
         }
     }
@@ -427,7 +507,24 @@ int index_system_save_all(IndexSystem *idx) {
     if (!idx) return 0;
 
     printf("Saving indexes to %s\n", idx->index_base_path);
-    // Implementação simplificada - apenas retorna sucesso
+
+    // Salvar Tries
+    if (idx->country_trie) trie_save_to_file(idx->country_trie);
+    if (idx->disaster_type_trie) trie_save_to_file(idx->disaster_type_trie);
+    if (idx->region_trie) trie_save_to_file(idx->region_trie);
+    if (idx->subregion_trie) trie_save_to_file(idx->subregion_trie);
+    if (idx->year_country_trie) trie_save_to_file(idx->year_country_trie);
+    if (idx->disaster_country_trie) trie_save_to_file(idx->disaster_country_trie);
+    if (idx->year_disaster_trie) trie_save_to_file(idx->year_disaster_trie);
+
+    // Salvar B+ Trees
+    if (idx->year_bplus) bplus_save_to_file(idx->year_bplus);
+    if (idx->deaths_bplus) bplus_save_to_file(idx->deaths_bplus);
+    if (idx->affected_bplus) bplus_save_to_file(idx->affected_bplus);
+    if (idx->damage_bplus) bplus_save_to_file(idx->damage_bplus);
+    if (idx->month_bplus) bplus_save_to_file(idx->month_bplus);
+    if (idx->day_bplus) bplus_save_to_file(idx->day_bplus);
+
     return 1;
 }
 
@@ -435,7 +532,7 @@ int index_system_load_all(IndexSystem *idx) {
     if (!idx) return 0;
 
     printf("Loading indexes from %s\n", idx->index_base_path);
-    // Implementação simplificada - reconstrói os índices
+    // Para esta implementação, apenas reconstrói os índices
     return index_system_build_all(idx);
 }
 
@@ -447,14 +544,30 @@ int* index_search_by_country(IndexSystem *idx, const char *country, int *result_
     if (!idx || !idx->dw || !country || !result_count) return NULL;
 
     *result_count = 0;
+
+    // Tentar usar índice Trie primeiro
+    if (idx->country_trie) {
+        long *trie_results = trie_search(idx->country_trie, country, result_count);
+        if (trie_results && *result_count > 0) {
+            // Converter long* para int*
+            int *results = malloc(*result_count * sizeof(int));
+            if (results) {
+                for (int i = 0; i < *result_count; i++) {
+                    results[i] = (int)trie_results[i];
+                }
+            }
+            free(trie_results);
+            return results;
+        }
+    }
+
+    // Fallback para busca linear
     int *results = malloc(idx->dw->fact_count * sizeof(int));
     if (!results) return NULL;
 
-    // Busca linear simples
     for (int i = 0; i < idx->dw->fact_count; i++) {
         DisasterFact *fact = &idx->dw->fact_table[i];
 
-        // Encontrar geografia
         for (int j = 0; j < idx->dw->geography_count; j++) {
             if (idx->dw->dim_geography[j].geography_key == fact->geography_key) {
                 if (strcmp(idx->dw->dim_geography[j].country, country) == 0) {
@@ -477,17 +590,49 @@ char** index_search_country_prefix(IndexSystem *idx, const char *prefix, int *re
     if (!idx || !idx->dw || !prefix || !result_count) return NULL;
 
     *result_count = 0;
+
+    // Coletar países únicos que começam com o prefixo
     char **results = malloc(idx->dw->geography_count * sizeof(char*));
     if (!results) return NULL;
 
     int prefix_len = strlen(prefix);
 
+    // Converter prefixo para minúsculo para comparação case-insensitive
+    char prefix_lower[50];
+    strncpy(prefix_lower, prefix, sizeof(prefix_lower) - 1);
+    prefix_lower[sizeof(prefix_lower) - 1] = '\0';
+    for (int i = 0; prefix_lower[i]; i++) {
+        prefix_lower[i] = tolower(prefix_lower[i]);
+    }
+
+    // Buscar em todas as dimensões geografia
     for (int i = 0; i < idx->dw->geography_count; i++) {
-        if (strncmp(idx->dw->dim_geography[i].country, prefix, prefix_len) == 0) {
-            results[*result_count] = malloc(strlen(idx->dw->dim_geography[i].country) + 1);
-            if (results[*result_count]) {
-                strcpy(results[*result_count], idx->dw->dim_geography[i].country);
-                (*result_count)++;
+        char country_lower[50];
+        strncpy(country_lower, idx->dw->dim_geography[i].country, sizeof(country_lower) - 1);
+        country_lower[sizeof(country_lower) - 1] = '\0';
+
+        // Converter para minúsculo
+        for (int j = 0; country_lower[j]; j++) {
+            country_lower[j] = tolower(country_lower[j]);
+        }
+
+        // Verificar se começa com o prefixo
+        if (strncmp(country_lower, prefix_lower, prefix_len) == 0) {
+            // Verificar se já não foi adicionado (evitar duplicatas)
+            bool already_added = false;
+            for (int k = 0; k < *result_count; k++) {
+                if (strcmp(results[k], idx->dw->dim_geography[i].country) == 0) {
+                    already_added = true;
+                    break;
+                }
+            }
+
+            if (!already_added) {
+                results[*result_count] = malloc(strlen(idx->dw->dim_geography[i].country) + 1);
+                if (results[*result_count]) {
+                    strcpy(results[*result_count], idx->dw->dim_geography[i].country);
+                    (*result_count)++;
+                }
             }
         }
     }
@@ -504,6 +649,23 @@ int* index_search_by_disaster_type(IndexSystem *idx, const char *disaster_type, 
     if (!idx || !idx->dw || !disaster_type || !result_count) return NULL;
 
     *result_count = 0;
+
+    // Tentar usar índice Trie primeiro
+    if (idx->disaster_type_trie) {
+        long *trie_results = trie_search(idx->disaster_type_trie, disaster_type, result_count);
+        if (trie_results && *result_count > 0) {
+            int *results = malloc(*result_count * sizeof(int));
+            if (results) {
+                for (int i = 0; i < *result_count; i++) {
+                    results[i] = (int)trie_results[i];
+                }
+            }
+            free(trie_results);
+            return results;
+        }
+    }
+
+    // Fallback para busca linear
     int *results = malloc(idx->dw->fact_count * sizeof(int));
     if (!results) return NULL;
 
@@ -559,6 +721,24 @@ int* index_search_by_year(IndexSystem *idx, int year, int *result_count) {
     if (!idx || !idx->dw || !result_count) return NULL;
 
     *result_count = 0;
+
+    // Tentar usar índice B+ Tree primeiro
+    if (idx->year_bplus) {
+        long *bplus_results = bplus_search(idx->year_bplus, year, result_count);
+        if (bplus_results && *result_count > 0) {
+            // Converter long* para int*
+            int *results = malloc(*result_count * sizeof(int));
+            if (results) {
+                for (int i = 0; i < *result_count; i++) {
+                    results[i] = (int)bplus_results[i];
+                }
+            }
+            free(bplus_results);
+            return results;
+        }
+    }
+
+    // Fallback para busca linear
     int *results = malloc(idx->dw->fact_count * sizeof(int));
     if (!results) return NULL;
 
@@ -584,9 +764,57 @@ int* index_search_by_year(IndexSystem *idx, int year, int *result_count) {
 }
 
 int* index_search_by_year_range(IndexSystem *idx, int start_year, int end_year, int *result_count) {
-    if (!idx || !idx->dw || !result_count) return NULL;
+    if (!idx || !idx->dw || !result_count || start_year > end_year) return NULL;
 
     *result_count = 0;
+
+    // Usar bitmaps se disponíveis para consultas de intervalo
+    if (start_year >= 1970 && end_year < 2170) {
+        int start_index = start_year - 1970;
+        int end_index = end_year - 1970;
+
+        if (start_index >= 0 && end_index < 200) {
+            // Usar operações de bitmap para encontrar união
+            unsigned char *result_bitmap = NULL;
+
+            for (int year_idx = start_index; year_idx <= end_index; year_idx++) {
+                if (idx->year_bitmap[year_idx]) {
+                    if (!result_bitmap) {
+                        result_bitmap = malloc(1000); // 8000 bits
+                        memcpy(result_bitmap, idx->year_bitmap[year_idx], 1000);
+                    } else {
+                        unsigned char *temp = bitmap_or(result_bitmap, idx->year_bitmap[year_idx], 1000);
+                        if (temp) {
+                            free(result_bitmap);
+                            result_bitmap = temp;
+                        }
+                    }
+                }
+            }
+
+            if (result_bitmap) {
+                // Contar bits setados e criar array de resultados
+                int bit_count = bitmap_count_bits(result_bitmap, 1000);
+                if (bit_count > 0) {
+                    int *results = malloc(bit_count * sizeof(int));
+                    if (results) {
+                        int result_idx = 0;
+                        for (int i = 0; i < 8000 && result_idx < bit_count; i++) {
+                            if (bitmap_get_bit(result_bitmap, i)) {
+                                results[result_idx++] = i;
+                            }
+                        }
+                        *result_count = result_idx;
+                        free(result_bitmap);
+                        return results;
+                    }
+                }
+                free(result_bitmap);
+            }
+        }
+    }
+
+    // Fallback para busca linear
     int *results = malloc(idx->dw->fact_count * sizeof(int));
     if (!results) return NULL;
 
@@ -686,37 +914,55 @@ int* index_search_country_year(IndexSystem *idx, const char *country, int year, 
     if (!idx || !idx->dw || !country || !result_count) return NULL;
 
     *result_count = 0;
-    int *results = malloc(idx->dw->fact_count * sizeof(int));
-    if (!results) return NULL;
 
-    for (int i = 0; i < idx->dw->fact_count; i++) {
-        DisasterFact *fact = &idx->dw->fact_table[i];
-        bool country_match = false, year_match = false;
+    // Tentar usar índice composto primeiro
+    if (idx->year_country_trie) {
+        char composite_key[100];
+        snprintf(composite_key, sizeof(composite_key), "%d_%s", year, country);
 
-        // Verificar país
-        for (int j = 0; j < idx->dw->geography_count; j++) {
-            if (idx->dw->dim_geography[j].geography_key == fact->geography_key) {
-                if (strcmp(idx->dw->dim_geography[j].country, country) == 0) {
-                    country_match = true;
+        long *composite_results = trie_search(idx->year_country_trie, composite_key, result_count);
+        if (composite_results && *result_count > 0) {
+            int *results = malloc(*result_count * sizeof(int));
+            if (results) {
+                for (int i = 0; i < *result_count; i++) {
+                    results[i] = (int)composite_results[i];
                 }
-                break;
             }
-        }
-
-        // Verificar ano
-        for (int j = 0; j < idx->dw->time_count; j++) {
-            if (idx->dw->dim_time[j].time_key == fact->time_key) {
-                if (idx->dw->dim_time[j].start_year == year) {
-                    year_match = true;
-                }
-                break;
-            }
-        }
-
-        if (country_match && year_match) {
-            results[(*result_count)++] = i;
+            free(composite_results);
+            return results;
         }
     }
+
+    // Fallback: intersecção de resultados individuais
+    int country_count = 0, year_count = 0;
+    int *country_results = index_search_by_country(idx, country, &country_count);
+    int *year_results = index_search_by_year(idx, year, &year_count);
+
+    if (!country_results || !year_results) {
+        free(country_results);
+        free(year_results);
+        return NULL;
+    }
+
+    // Intersecção dos resultados
+    int *results = malloc((country_count < year_count ? country_count : year_count) * sizeof(int));
+    if (!results) {
+        free(country_results);
+        free(year_results);
+        return NULL;
+    }
+
+    for (int i = 0; i < country_count; i++) {
+        for (int j = 0; j < year_count; j++) {
+            if (country_results[i] == year_results[j]) {
+                results[(*result_count)++] = country_results[i];
+                break;
+            }
+        }
+    }
+
+    free(country_results);
+    free(year_results);
 
     if (*result_count == 0) {
         free(results);
@@ -730,6 +976,26 @@ int* index_search_disaster_country(IndexSystem *idx, const char *disaster_type, 
     if (!idx || !idx->dw || !disaster_type || !country || !result_count) return NULL;
 
     *result_count = 0;
+
+    // Tentar usar índice composto primeiro
+    if (idx->disaster_country_trie) {
+        char composite_key[100];
+        snprintf(composite_key, sizeof(composite_key), "%s_%s", disaster_type, country);
+
+        long *composite_results = trie_search(idx->disaster_country_trie, composite_key, result_count);
+        if (composite_results && *result_count > 0) {
+            int *results = malloc(*result_count * sizeof(int));
+            if (results) {
+                for (int i = 0; i < *result_count; i++) {
+                    results[i] = (int)composite_results[i];
+                }
+            }
+            free(composite_results);
+            return results;
+        }
+    }
+
+    // Fallback para busca linear
     int *results = malloc(idx->dw->fact_count * sizeof(int));
     if (!results) return NULL;
 
@@ -791,11 +1057,7 @@ int* index_search_country_year_disaster(IndexSystem *idx, const char *country, i
             }
         }
 
-// =============================================================================
-// CONTINUAÇÃO DE star_schema_indexes.c - Funções restantes
-// =============================================================================
-
-// Verificar ano
+        // Verificar ano
         for (int j = 0; j < idx->dw->time_count; j++) {
             if (idx->dw->dim_time[j].time_key == fact->time_key) {
                 if (idx->dw->dim_time[j].start_year == year) {
@@ -1253,6 +1515,11 @@ void index_print_statistics(IndexSystem *idx) {
     printf("  Year bitmaps: %d/200\n", year_bitmaps);
     printf("  Country bitmaps: %d/250\n", country_bitmaps);
     printf("  Disaster bitmaps: %d/100\n", disaster_bitmaps);
+
+    printf("Composite Indexes:\n");
+    printf("  Year-Country Trie: %s\n", idx->year_country_trie ? "Initialized" : "NULL");
+    printf("  Disaster-Country Trie: %s\n", idx->disaster_country_trie ? "Initialized" : "NULL");
+    printf("  Year-Disaster Trie: %s\n", idx->year_disaster_trie ? "Initialized" : "NULL");
 }
 
 int index_verify_integrity(IndexSystem *idx) {
@@ -1268,6 +1535,7 @@ int index_verify_integrity(IndexSystem *idx) {
     }
 
     // Verificar se todas as chaves estrangeiras são válidas
+    int invalid_refs = 0;
     for (int i = 0; i < idx->dw->fact_count; i++) {
         DisasterFact *fact = &idx->dw->fact_table[i];
 
@@ -1295,9 +1563,19 @@ int index_verify_integrity(IndexSystem *idx) {
         }
 
         if (!time_found || !geo_found || !type_found) {
-            printf("ERROR: Fact %d has invalid foreign keys\n", i);
-            return 0;
+            invalid_refs++;
+            if (invalid_refs <= 5) { // Mostrar apenas os primeiros 5 erros
+                printf("ERROR: Fact %d has invalid foreign keys (time:%s, geo:%s, type:%s)\n",
+                       i, time_found ? "OK" : "MISSING",
+                       geo_found ? "OK" : "MISSING",
+                       type_found ? "OK" : "MISSING");
+            }
         }
+    }
+
+    if (invalid_refs > 0) {
+        printf("ERROR: Found %d facts with invalid foreign key references\n", invalid_refs);
+        return 0;
     }
 
     printf("Index integrity verification completed successfully\n");

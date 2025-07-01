@@ -1,11 +1,12 @@
 # depslib dependency file v1.0
-1751144693 source:/home/luiz/Desktop/CPD/trabalhoFinal/bplus.c
+1751337149 source:/home/luiz/Desktop/CPD/trabalhoFinal/bplus.c
 	"bplus.h"
 	<stdio.h>
 	<stdlib.h>
 	<string.h>
+	<stdbool.h>
 
-1751144702 /home/luiz/Desktop/CPD/trabalhoFinal/bplus.h
+1751336931 /home/luiz/Desktop/CPD/trabalhoFinal/bplus.h
 
 1751209853 /home/luiz/Desktop/CPD/trabalhoFinal/disaster.h
 	<stdio.h>
@@ -23,7 +24,7 @@
 	<stdlib.h>
 	<string.h>
 
-1751332376 source:/home/luiz/Desktop/CPD/trabalhoFinal/main.c
+1751337855 source:/home/luiz/Desktop/CPD/trabalhoFinal/main.c
 	<raylib.h>
 	<stdio.h>
 	<stdlib.h>
@@ -38,9 +39,9 @@
 	"trie.h"
 	"star_schema_indexes.h"
 
-1751144708 /home/luiz/Desktop/CPD/trabalhoFinal/trie.h
+1751337176 /home/luiz/Desktop/CPD/trabalhoFinal/trie.h
 
-1751144676 source:/home/luiz/Desktop/CPD/trabalhoFinal/trie.c
+1751337339 source:/home/luiz/Desktop/CPD/trabalhoFinal/trie.c
 	"trie.h"
 	<stdio.h>
 	<stdlib.h>
@@ -67,12 +68,13 @@
 	<stdarg.h>
 	<stdbool.h>
 
-1751310136 source:/home/luiz/Desktop/CPD/trabalhoFinal/star_schema_indexes.c
+1751335348 source:/home/luiz/Desktop/CPD/trabalhoFinal/star_schema_indexes.c
 	"star_schema_indexes.h"
 	<string.h>
 	<math.h>
 	<stdbool.h>
 	<limits.h>
+	<ctype.h>
 
 1751310080 /home/luiz/Desktop/CPD/trabalhoFinal/star_schema_indexes.h
 	"disaster_star_schema.h"
