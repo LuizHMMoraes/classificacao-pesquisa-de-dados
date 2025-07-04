@@ -24,7 +24,7 @@
 	<stdlib.h>
 	<string.h>
 
-1751337855 source:/home/luiz/Desktop/CPD/trabalhoFinal/main.c
+1751656183 source:/home/luiz/Desktop/CPD/trabalhoFinal/main.c
 	<raylib.h>
 	<stdio.h>
 	<stdlib.h>
@@ -76,7 +76,7 @@
 	<limits.h>
 	<ctype.h>
 
-1751310080 /home/luiz/Desktop/CPD/trabalhoFinal/star_schema_indexes.h
+1751656227 /home/luiz/Desktop/CPD/trabalhoFinal/star_schema_indexes.h
 	"disaster_star_schema.h"
 	"bplus.h"
 	"trie.h"
