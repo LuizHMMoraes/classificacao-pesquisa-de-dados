@@ -28,6 +28,8 @@ struct BPlusTree {
 void bplus_destroy_node(BPlusNode *node);
 BPlusNode* bplus_create_node(int order, int is_leaf);
 BPlusNode* bplus_split_node(BPlusTree *tree, BPlusNode *node);
+void bplus_collect_range_values(BPlusNode *node, int min_key, int max_key, long **results, int *count, int *capacity);
+BPlusNode* bplus_find_leaf_for_key(BPlusTree *tree, int key);
 
 BPlusTree* bplus_create(const char *filename) {
     BPlusTree *tree = malloc(sizeof(BPlusTree));
@@ -284,71 +286,160 @@ long* bplus_search(BPlusTree *tree, int key, int *count) {
     return all_results;
 }
 
-// Implementação de busca por intervalo
-long* bplus_search_range(BPlusTree *tree, int min_key, int max_key, int *count) {
-    *count = 0;
-    if (!tree || !tree->root || min_key > max_key) return NULL;
+// Função auxiliar para encontrar a folha que pode conter uma chave
+BPlusNode* bplus_find_leaf_for_key(BPlusTree *tree, int key) {
+    if (!tree || !tree->root) return NULL;
 
-    // Encontra primeiro nó folha que pode conter min_key
     BPlusNode *current = tree->root;
+
+    // Navega até a folha
     while (!current->is_leaf) {
         int i = 0;
-        while (i < current->num_keys && min_key > current->keys[i]) {
+        while (i < current->num_keys && key > current->keys[i]) {
             i++;
         }
         current = current->children[i];
     }
 
-    long *results = malloc(10000 * sizeof(long));
-    if (!results) return NULL;
+    return current;
+}
 
-    int total_found = 0;
-    int buffer_size = 10000;
+// Função auxiliar para coletar valores em um intervalo
+void bplus_collect_range_values(BPlusNode *node, int min_key, int max_key, long **results, int *count, int *capacity) {
+    if (!node) return;
+
+    for (int i = 0; i < node->num_keys; i++) {
+        if (node->keys[i] >= min_key && node->keys[i] <= max_key) {
+            // Expandir buffer se necessário
+            if (*count >= *capacity) {
+                *capacity *= 2;
+                long *new_buffer = realloc(*results, (*capacity) * sizeof(long));
+                if (!new_buffer) return;
+                *results = new_buffer;
+            }
+
+            (*results)[(*count)++] = node->values[i];
+        } else if (node->keys[i] > max_key) {
+            // Parou de encontrar chaves no intervalo
+            break;
+        }
+    }
+}
+
+// Nova implementação de busca por intervalo
+long* bplus_search_range(BPlusTree *tree, int min_key, int max_key, int *count) {
+    *count = 0;
+    if (!tree || !tree->root || min_key > max_key) return NULL;
+
+    // Encontra primeira folha que pode conter min_key
+    BPlusNode *current = bplus_find_leaf_for_key(tree, min_key);
+    if (!current) return NULL;
+
+    // Buffer inicial para resultados
+    int capacity = 1000;
+    long *results = malloc(capacity * sizeof(long));
+    if (!results) return NULL;
 
     // Percorre folhas coletando valores no intervalo
     while (current) {
         bool found_in_leaf = false;
 
+        // Coletar valores desta folha que estão no intervalo
+        bplus_collect_range_values(current, min_key, max_key, &results, count, &capacity);
+
+        // Verificar se encontrou algo nesta folha
         for (int i = 0; i < current->num_keys; i++) {
             if (current->keys[i] >= min_key && current->keys[i] <= max_key) {
-                // Expandir buffer se necessário
-                if (total_found >= buffer_size) {
-                    buffer_size *= 2;
-                    long *new_buffer = realloc(results, buffer_size * sizeof(long));
-                    if (!new_buffer) {
-                        free(results);
-                        *count = 0;
-                        return NULL;
-                    }
-                    results = new_buffer;
-                }
-
-                results[total_found++] = current->values[i];
                 found_in_leaf = true;
-            } else if (current->keys[i] > max_key) {
-                // Passou do intervalo
-                *count = total_found;
-                return results;
+                break;
             }
+        }
+
+        // Se todas as chaves desta folha são maiores que max_key, parar
+        if (current->num_keys > 0 && current->keys[0] > max_key) {
+            break;
         }
 
         current = current->next;
 
-        // Se não encontrou nada nesta folha e já passou do min_key,
+        // Se não encontrou nada nesta folha e já passou do min_key, pode parar
         if (!found_in_leaf && current && current->num_keys > 0 &&
             current->keys[0] > max_key) {
             break;
         }
     }
 
-    *count = total_found;
-
-    if (total_found == 0) {
+    if (*count == 0) {
         free(results);
         return NULL;
     }
 
+    // Redimensionar para o tamanho exato
+    if (*count < capacity) {
+        long *final_result = realloc(results, (*count) * sizeof(long));
+        if (final_result) {
+            results = final_result;
+        }
+    }
+
     return results;
+}
+
+// Implementação de busca por intervalo (alternativa mais simples)
+long* bplus_search_range_simple(BPlusTree *tree, int min_key, int max_key, int *count) {
+    *count = 0;
+    if (!tree || !tree->root || min_key > max_key) return NULL;
+
+    // Buffer para todos os resultados
+    int capacity = 10000;
+    long *all_results = malloc(capacity * sizeof(long));
+    if (!all_results) return NULL;
+
+    int total_found = 0;
+
+    // Buscar cada chave no intervalo individualmente
+    for (int key = min_key; key <= max_key; key++) {
+        int key_count = 0;
+        long *key_results = bplus_search(tree, key, &key_count);
+
+        if (key_results && key_count > 0) {
+            // Verificar se há espaço suficiente
+            while (total_found + key_count >= capacity) {
+                capacity *= 2;
+                long *new_buffer = realloc(all_results, capacity * sizeof(long));
+                if (!new_buffer) {
+                    free(all_results);
+                    free(key_results);
+                    return NULL;
+                }
+                all_results = new_buffer;
+            }
+
+            // Copiar resultados desta chave
+            for (int i = 0; i < key_count; i++) {
+                all_results[total_found++] = key_results[i];
+            }
+
+            free(key_results);
+        }
+    }
+
+    if (total_found == 0) {
+        free(all_results);
+        return NULL;
+    }
+
+    *count = total_found;
+
+    // Redimensionar para o tamanho exato
+    if (total_found < capacity) {
+        long *final_result = realloc(all_results, total_found * sizeof(long));
+        if (final_result) {
+            all_results = final_result;
+        }
+    }
+
+    return all_results;
 }
 
 // Salvar e carregar

@@ -1612,3 +1612,508 @@ void optimized_dw_print_statistics(OptimizedDataWarehouse *odw) {
         printf("  Index directory: %s\n", odw->config->index_directory);
     }
 }
+
+// =============================================================================
+// IMPLEMENTAÇÕES ESSENCIAIS ADICIONAIS - CONSULTAS POR INTERVALO DE ANOS OTIMIZADAS
+// =============================================================================
+
+int* index_search_by_year_range_optimized(IndexSystem *idx, int start_year, int end_year, int *result_count) {
+    if (!idx || !idx->dw || !result_count || start_year > end_year) return NULL;
+
+    *result_count = 0;
+
+    // Usar B+ Tree para busca por intervalo se disponível
+    if (idx->year_bplus) {
+        long *range_results = bplus_search_range(idx->year_bplus, start_year, end_year, result_count);
+        if (range_results && *result_count > 0) {
+            int *results = malloc(*result_count * sizeof(int));
+            if (results) {
+                for (int i = 0; i < *result_count; i++) {
+                    results[i] = (int)range_results[i];
+                }
+            }
+            free(range_results);
+            return results;
+        }
+    }
+
+    // Fallback para busca por intervalo usando bitmap ou linear
+    return index_search_by_year_range(idx, start_year, end_year, result_count);
+}
+
+int* index_search_country_year_range(IndexSystem *idx, const char *country, int start_year, int end_year, int *result_count) {
+    if (!idx || !idx->dw || !country || !result_count || start_year > end_year) return NULL;
+
+    *result_count = 0;
+
+    // Buscar todos os anos no intervalo para o país
+    int *results = malloc(idx->dw->fact_count * sizeof(int));
+    if (!results) return NULL;
+
+    for (int i = 0; i < idx->dw->fact_count; i++) {
+        DisasterFact *fact = &idx->dw->fact_table[i];
+        bool country_match = false, year_match = false;
+
+        // Verificar país
+        for (int j = 0; j < idx->dw->geography_count; j++) {
+            if (idx->dw->dim_geography[j].geography_key == fact->geography_key) {
+                if (strcmp(idx->dw->dim_geography[j].country, country) == 0) {
+                    country_match = true;
+                }
+                break;
+            }
+        }
+
+        // Verificar intervalo de anos
+        for (int j = 0; j < idx->dw->time_count; j++) {
+            if (idx->dw->dim_time[j].time_key == fact->time_key) {
+                if (idx->dw->dim_time[j].start_year >= start_year &&
+                    idx->dw->dim_time[j].start_year <= end_year) {
+                    year_match = true;
+                }
+                break;
+            }
+        }
+
+        if (country_match && year_match) {
+            results[(*result_count)++] = i;
+        }
+    }
+
+    if (*result_count == 0) {
+        free(results);
+        return NULL;
+    }
+
+    return results;
+}
+
+// =============================================================================
+// FUNÇÕES DE ORDENAÇÃO COM B+ TREE
+// =============================================================================
+
+int* index_sort_facts_by_affected(IndexSystem *idx, int *fact_ids, int fact_count, bool descending, int *result_count) {
+    if (!idx || !idx->dw || !fact_ids || fact_count <= 0 || !result_count) return NULL;
+
+    *result_count = 0;
+
+    // Criar array de estruturas para ordenação
+    FactSortData *sort_data = malloc(fact_count * sizeof(FactSortData));
+    if (!sort_data) return NULL;
+
+    // Preencher dados para ordenação
+    for (int i = 0; i < fact_count; i++) {
+        int fact_id = fact_ids[i];
+        if (fact_id >= 0 && fact_id < idx->dw->fact_count) {
+            sort_data[i].fact_id = fact_id;
+            sort_data[i].sort_value = idx->dw->fact_table[fact_id].total_affected;
+
+            // Preencher dados auxiliares
+            DimTime *time_dim = NULL;
+            DimGeography *geo_dim = NULL;
+
+            for (int j = 0; j < idx->dw->time_count; j++) {
+                if (idx->dw->dim_time[j].time_key == idx->dw->fact_table[fact_id].time_key) {
+                    time_dim = &idx->dw->dim_time[j];
+                    break;
+                }
+            }
+
+            for (int j = 0; j < idx->dw->geography_count; j++) {
+                if (idx->dw->dim_geography[j].geography_key == idx->dw->fact_table[fact_id].geography_key) {
+                    geo_dim = &idx->dw->dim_geography[j];
+                    break;
+                }
+            }
+
+            sort_data[i].year = time_dim ? time_dim->start_year : 0;
+            strncpy(sort_data[i].country, geo_dim ? geo_dim->country : "Unknown",
+                   sizeof(sort_data[i].country) - 1);
+            sort_data[i].country[sizeof(sort_data[i].country) - 1] = '\0';
+        }
+    }
+
+    // Ordenar usando qsort
+    qsort(sort_data, fact_count, sizeof(FactSortData), compare_fact_by_affected_desc);
+
+    // Criar array de resultados
+    int *results = malloc(fact_count * sizeof(int));
+    if (!results) {
+        free(sort_data);
+        return NULL;
+    }
+
+    for (int i = 0; i < fact_count; i++) {
+        results[i] = sort_data[i].fact_id;
+    }
+
+    *result_count = fact_count;
+    free(sort_data);
+    return results;
+}
+
+int* index_sort_facts_by_damage(IndexSystem *idx, int *fact_ids, int fact_count, bool descending, int *result_count) {
+    if (!idx || !idx->dw || !fact_ids || fact_count <= 0 || !result_count) return NULL;
+
+    *result_count = 0;
+
+    FactSortData *sort_data = malloc(fact_count * sizeof(FactSortData));
+    if (!sort_data) return NULL;
+
+    for (int i = 0; i < fact_count; i++) {
+        int fact_id = fact_ids[i];
+        if (fact_id >= 0 && fact_id < idx->dw->fact_count) {
+            sort_data[i].fact_id = fact_id;
+            sort_data[i].sort_value = idx->dw->fact_table[fact_id].total_damage;
+        }
+    }
+
+    qsort(sort_data, fact_count, sizeof(FactSortData), compare_fact_by_damage_desc);
+
+    int *results = malloc(fact_count * sizeof(int));
+    if (!results) {
+        free(sort_data);
+        return NULL;
+    }
+
+    for (int i = 0; i < fact_count; i++) {
+        results[i] = sort_data[i].fact_id;
+    }
+
+    *result_count = fact_count;
+    free(sort_data);
+    return results;
+}
+
+int* index_sort_facts_by_deaths(IndexSystem *idx, int *fact_ids, int fact_count, bool descending, int *result_count) {
+    if (!idx || !idx->dw || !fact_ids || fact_count <= 0 || !result_count) return NULL;
+
+    *result_count = 0;
+
+    FactSortData *sort_data = malloc(fact_count * sizeof(FactSortData));
+    if (!sort_data) return NULL;
+
+    for (int i = 0; i < fact_count; i++) {
+        int fact_id = fact_ids[i];
+        if (fact_id >= 0 && fact_id < idx->dw->fact_count) {
+            sort_data[i].fact_id = fact_id;
+            sort_data[i].sort_value = idx->dw->fact_table[fact_id].total_deaths;
+        }
+    }
+
+    qsort(sort_data, fact_count, sizeof(FactSortData), compare_fact_by_deaths_desc);
+
+    int *results = malloc(fact_count * sizeof(int));
+    if (!results) {
+        free(sort_data);
+        return NULL;
+    }
+
+    for (int i = 0; i < fact_count; i++) {
+        results[i] = sort_data[i].fact_id;
+    }
+
+    *result_count = fact_count;
+    free(sort_data);
+    return results;
+}
+
+int* index_get_sorted_countries_by_affected(IndexSystem *idx, int *country_ids, int country_count,
+                                           bool descending, int *result_count) {
+    if (!idx || !idx->dw || !country_ids || country_count <= 0 || !result_count) return NULL;
+
+    *result_count = 0;
+
+    // Calcular totais por país
+    CountrySortData *sort_data = malloc(country_count * sizeof(CountrySortData));
+    if (!sort_data) return NULL;
+
+    for (int i = 0; i < country_count; i++) {
+        int country_id = country_ids[i];
+        if (country_id >= 0 && country_id < idx->dw->geography_count) {
+            strncpy(sort_data[i].country, idx->dw->dim_geography[country_id].country,
+                   sizeof(sort_data[i].country) - 1);
+            sort_data[i].country[sizeof(sort_data[i].country) - 1] = '\0';
+            sort_data[i].total_affected = 0;
+            sort_data[i].total_damage = 0;
+            sort_data[i].total_deaths = 0;
+            sort_data[i].disaster_count = 0;
+            sort_data[i].original_index = i;
+
+            // Somar todos os fatos deste país
+            for (int j = 0; j < idx->dw->fact_count; j++) {
+                if (idx->dw->fact_table[j].geography_key == idx->dw->dim_geography[country_id].geography_key) {
+                    sort_data[i].total_affected += idx->dw->fact_table[j].total_affected;
+                    sort_data[i].total_damage += idx->dw->fact_table[j].total_damage;
+                    sort_data[i].total_deaths += idx->dw->fact_table[j].total_deaths;
+                    sort_data[i].disaster_count++;
+                }
+            }
+        }
+    }
+
+    qsort(sort_data, country_count, sizeof(CountrySortData), compare_country_by_affected_desc);
+
+    int *results = malloc(country_count * sizeof(int));
+    if (!results) {
+        free(sort_data);
+        return NULL;
+    }
+
+    for (int i = 0; i < country_count; i++) {
+        results[i] = sort_data[i].original_index;
+    }
+
+    *result_count = country_count;
+    free(sort_data);
+    return results;
+}
+
+// =============================================================================
+// AGREGAÇÃO POR INTERVALO DE ANOS
+// =============================================================================
+
+AggregationResult* index_aggregate_by_year_range(IndexSystem *idx, int start_year, int end_year) {
+    if (!idx || !idx->dw || start_year > end_year) return NULL;
+
+    AggregationResult *result = malloc(sizeof(AggregationResult));
+    if (!result) return NULL;
+
+    memset(result, 0, sizeof(AggregationResult));
+    result->min_deaths = LLONG_MAX;
+    result->min_affected = LLONG_MAX;
+    result->min_damage = LLONG_MAX;
+
+    for (int i = 0; i < idx->dw->fact_count; i++) {
+        DisasterFact *fact = &idx->dw->fact_table[i];
+
+        // Verificar se pertence ao intervalo de anos
+        for (int j = 0; j < idx->dw->time_count; j++) {
+            if (idx->dw->dim_time[j].time_key == fact->time_key) {
+                if (idx->dw->dim_time[j].start_year >= start_year &&
+                    idx->dw->dim_time[j].start_year <= end_year) {
+                    result->count++;
+                    result->total_deaths += fact->total_deaths;
+                    result->total_affected += fact->total_affected;
+                    result->total_damage += fact->total_damage;
+
+                    // Máximos
+                    if (fact->total_deaths > result->max_deaths) result->max_deaths = fact->total_deaths;
+                    if (fact->total_affected > result->max_affected) result->max_affected = fact->total_affected;
+                    if (fact->total_damage > result->max_damage) result->max_damage = fact->total_damage;
+
+                    // Mínimos
+                    if (fact->total_deaths < result->min_deaths) result->min_deaths = fact->total_deaths;
+                    if (fact->total_affected < result->min_affected) result->min_affected = fact->total_affected;
+                    if (fact->total_damage < result->min_damage) result->min_damage = fact->total_damage;
+                }
+                break;
+            }
+        }
+    }
+
+    if (result->count > 0) {
+        result->avg_deaths = (double)result->total_deaths / result->count;
+        result->avg_affected = (double)result->total_affected / result->count;
+        result->avg_damage = (double)result->total_damage / result->count;
+    } else {
+        result->min_deaths = 0;
+        result->min_affected = 0;
+        result->min_damage = 0;
+    }
+
+    return result;
+}
+
+// =============================================================================
+// CONSULTAS OTIMIZADAS ADICIONAIS
+// =============================================================================
+
+int* optimized_query_by_country_and_year_range(OptimizedDataWarehouse *odw, const char *country,
+                                               int start_year, int end_year, int *result_count) {
+    if (!odw || !country || !result_count || start_year > end_year) return NULL;
+
+    // Verificar cache primeiro
+    char cache_key[256];
+    snprintf(cache_key, sizeof(cache_key), "country_year_range:%s:%d:%d", country, start_year, end_year);
+
+    int *cached_results = cache_search(odw->cache, cache_key, result_count);
+    if (cached_results) {
+        return cached_results;
+    }
+
+    // Buscar usando índices
+    int *results = index_search_country_year_range(odw->indexes, country, start_year, end_year, result_count);
+
+    // Inserir no cache se encontrou resultados
+    if (results && *result_count > 0) {
+        cache_insert(odw->cache, cache_key, results, *result_count);
+    }
+
+    return results;
+}
+
+AggregationResult* optimized_aggregate_by_year_range(OptimizedDataWarehouse *odw, int start_year, int end_year) {
+    if (!odw || start_year > end_year) return NULL;
+
+    return index_aggregate_by_year_range(odw->indexes, start_year, end_year);
+}
+
+int* optimized_query_with_all_filters(OptimizedDataWarehouse *odw, const char *country,
+                                     const char *disaster_type, int start_year, int end_year,
+                                     int sort_type, bool descending, int *result_count) {
+    if (!odw || !result_count) return NULL;
+
+    *result_count = 0;
+
+    // Buscar com filtros básicos
+    int *filtered_results = NULL;
+    int filtered_count = 0;
+
+    // Aplicar filtros em sequência
+    if (country && strlen(country) > 0) {
+        if (start_year > 0 && end_year > 0) {
+            filtered_results = index_search_country_year_range(odw->indexes, country, start_year, end_year, &filtered_count);
+        } else {
+            filtered_results = index_search_by_country(odw->indexes, country, &filtered_count);
+        }
+    } else if (start_year > 0 && end_year > 0) {
+        filtered_results = index_search_by_year_range(odw->indexes, start_year, end_year, &filtered_count);
+    } else {
+        // Sem filtros, retornar todos os fatos
+        filtered_results = malloc(odw->dw->fact_count * sizeof(int));
+        if (filtered_results) {
+            for (int i = 0; i < odw->dw->fact_count; i++) {
+                filtered_results[i] = i;
+            }
+            filtered_count = odw->dw->fact_count;
+        }
+    }
+
+    if (!filtered_results || filtered_count == 0) {
+        return NULL;
+    }
+
+    // Aplicar filtro de tipo de desastre se especificado
+    if (disaster_type && strlen(disaster_type) > 0) {
+        int *disaster_filtered = malloc(filtered_count * sizeof(int));
+        int disaster_count = 0;
+
+        for (int i = 0; i < filtered_count; i++) {
+            int fact_id = filtered_results[i];
+            DisasterFact *fact = &odw->dw->fact_table[fact_id];
+
+            for (int j = 0; j < odw->dw->disaster_type_count; j++) {
+                if (odw->dw->dim_disaster_type[j].disaster_type_key == fact->disaster_type_key) {
+                    if (strcmp(odw->dw->dim_disaster_type[j].disaster_type, disaster_type) == 0) {
+                        disaster_filtered[disaster_count++] = fact_id;
+                    }
+                    break;
+                }
+            }
+        }
+
+        free(filtered_results);
+        filtered_results = disaster_filtered;
+        filtered_count = disaster_count;
+    }
+
+    if (filtered_count == 0) {
+        free(filtered_results);
+        return NULL;
+    }
+
+    // Aplicar ordenação se especificada
+    int *sorted_results = NULL;
+    int sorted_count = 0;
+
+    switch (sort_type) {
+        case INDEX_SORT_BY_AFFECTED:
+            sorted_results = index_sort_facts_by_affected(odw->indexes, filtered_results, filtered_count, descending, &sorted_count);
+            break;
+        case INDEX_SORT_BY_DAMAGE:
+            sorted_results = index_sort_facts_by_damage(odw->indexes, filtered_results, filtered_count, descending, &sorted_count);
+            break;
+        case INDEX_SORT_BY_DEATHS:
+            sorted_results = index_sort_facts_by_deaths(odw->indexes, filtered_results, filtered_count, descending, &sorted_count);
+            break;
+        default:
+            sorted_results = filtered_results;
+            sorted_count = filtered_count;
+            filtered_results = NULL; // Evitar double free
+            break;
+    }
+
+    free(filtered_results);
+
+    *result_count = sorted_count;
+    return sorted_results;
+}
+
+// =============================================================================
+// FUNÇÕES DE COMPARAÇÃO PARA QSORT
+// =============================================================================
+
+int compare_country_by_affected_desc(const void *a, const void *b) {
+    CountrySortData *country_a = (CountrySortData *)a;
+    CountrySortData *country_b = (CountrySortData *)b;
+    if (country_b->total_affected > country_a->total_affected) return 1;
+    if (country_b->total_affected < country_a->total_affected) return -1;
+    return 0;
+}
+
+int compare_country_by_damage_desc(const void *a, const void *b) {
+    CountrySortData *country_a = (CountrySortData *)a;
+    CountrySortData *country_b = (CountrySortData *)b;
+    if (country_b->total_damage > country_a->total_damage) return 1;
+    if (country_b->total_damage < country_a->total_damage) return -1;
+    return 0;
+}
+
+int compare_country_by_deaths_desc(const void *a, const void *b) {
+    CountrySortData *country_a = (CountrySortData *)a;
+    CountrySortData *country_b = (CountrySortData *)b;
+    return country_b->total_deaths - country_a->total_deaths;
+}
+
+int compare_country_by_count_desc(const void *a, const void *b) {
+    CountrySortData *country_a = (CountrySortData *)a;
+    CountrySortData *country_b = (CountrySortData *)b;
+    return country_b->disaster_count - country_a->disaster_count;
+}
+
+int compare_country_by_name_asc(const void *a, const void *b) {
+    CountrySortData *country_a = (CountrySortData *)a;
+    CountrySortData *country_b = (CountrySortData *)b;
+    return strcmp(country_a->country, country_b->country);
+}
+
+int compare_fact_by_affected_desc(const void *a, const void *b) {
+    FactSortData *fact_a = (FactSortData *)a;
+    FactSortData *fact_b = (FactSortData *)b;
+    if (fact_b->sort_value > fact_a->sort_value) return 1;
+    if (fact_b->sort_value < fact_a->sort_value) return -1;
+    return 0;
+}
+
+int compare_fact_by_damage_desc(const void *a, const void *b) {
+    FactSortData *fact_a = (FactSortData *)a;
+    FactSortData *fact_b = (FactSortData *)b;
+    if (fact_b->sort_value > fact_a->sort_value) return 1;
+    if (fact_b->sort_value < fact_a->sort_value) return -1;
+    return 0;
+}
+
+int compare_fact_by_deaths_desc(const void *a, const void *b) {
+    FactSortData *fact_a = (FactSortData *)a;
+    FactSortData *fact_b = (FactSortData *)b;
+    if (fact_b->sort_value > fact_a->sort_value) return 1;
+    if (fact_b->sort_value < fact_a->sort_value) return -1;
+    return 0;
+}
+
+int compare_fact_by_year_desc(const void *a, const void *b) {
+    FactSortData *fact_a = (FactSortData *)a;
+    FactSortData *fact_b = (FactSortData *)b;
+    return fact_b->year - fact_a->year;
+}

@@ -6,6 +6,7 @@
 #include <stdbool.h>
 #include <time.h>
 #include <ctype.h>
+#include <limits.h>
 
 //Headers específicos do projeto
 #include "disaster.h"
@@ -225,14 +226,13 @@ void BuildCountrySortingIndexes(DisasterGUI *gui) {
     }
 }
 
-// Ordenar países usando B+ Tree
+// Ordenar países usando qsort
 void SortCountryStats(DisasterGUI *gui, SortType sort_type, SortOrder sort_order) {
     if (!gui || gui->country_stats_count == 0) return;
 
     gui->current_sort_type = sort_type;
     gui->current_sort_order = sort_order;
 
-    // Usar qsort como método principal (mais confiável)
     switch (sort_type) {
         case SORT_BY_AFFECTED:
             qsort(gui->country_stats, gui->country_stats_count, sizeof(CountryStats),
@@ -245,19 +245,7 @@ void SortCountryStats(DisasterGUI *gui, SortType sort_type, SortOrder sort_order
         case SORT_BY_DEATHS:
             qsort(gui->country_stats, gui->country_stats_count, sizeof(CountryStats),
                   compare_country_stats_deaths_desc);
-            break;
-        case SORT_BY_COUNT:
-            qsort(gui->country_stats, gui->country_stats_count, sizeof(CountryStats),
-                  compare_country_stats_count_desc);
-            break;
-        case SORT_BY_COUNTRY_NAME:
-            qsort(gui->country_stats, gui->country_stats_count, sizeof(CountryStats),
-                  compare_country_stats_name_asc);
-            break;
     }
-
-    // Após ordenação com qsort, reconstruir os índices B+ Tree para próximas consultas
-    BuildCountrySortingIndexes(gui);
 }
 
 // Comparadores para ordenação de tabela
@@ -311,14 +299,6 @@ void SortDisasterTable(DisasterGUI *gui, SortType sort_type) {
         case SORT_BY_DEATHS:
             qsort(gui->filtered_disasters, gui->filtered_count, sizeof(DisasterRecord),
                   compare_disasters_by_deaths_desc);
-            break;
-        case SORT_BY_COUNT: // Usar ano como proxy
-            qsort(gui->filtered_disasters, gui->filtered_count, sizeof(DisasterRecord),
-                  compare_disasters_by_year_desc);
-            break;
-        case SORT_BY_COUNTRY_NAME:
-            qsort(gui->filtered_disasters, gui->filtered_count, sizeof(DisasterRecord),
-                  compare_disasters_by_country_asc);
             break;
     }
 }
@@ -699,8 +679,8 @@ void HandleCountryAutocomplete(DisasterGUI *gui) {
 // Desenhar cabeçalho da aplicação
 void DrawApplicationHeader(Rectangle bounds) {
     DrawRectangleRec(bounds, PRIMARY_COLOR);
-    DrawText("Disaster Analysis Dashboard - Sistema com Ordenação B+ Tree", bounds.x + 20, bounds.y + 15, 24, WHITE);
-    DrawText("Advanced Sorting & Date Range Filtering with High-Performance Indexes", bounds.x + 20, bounds.y + 35, 14, (Color){200, 200, 200, 255});
+    DrawText("Disaster Analysis Dashboard", bounds.x + 20, bounds.y + 15, 24, WHITE);
+    DrawText("Sorting & Filtering with BPlus and Trie", bounds.x + 20, bounds.y + 35, 14, (Color){200, 200, 200, 255});
 }
 
 // Desenhar controles de filtro com slider duplo
@@ -730,18 +710,13 @@ void DrawFilterControls(Rectangle bounds, DisasterGUI *gui, bool *filters_change
         *filters_changed = true;
     }
 
-    // Status do sistema de índices
-    const char *index_status = gui->use_optimized_queries ? "Índices Ativos" : "Busca Linear";
-    Color status_color = gui->use_optimized_queries ? SECONDARY_COLOR : ACCENT_COLOR;
-    DrawText(index_status, bounds.x + 780, bounds.y + 45, 14, status_color);
-
     // Controles de ordenação
     Rectangle sort_controls_rect = {bounds.x + 20, bounds.y + 80, bounds.width - 40, 40};
     DrawText("Sort by:", sort_controls_rect.x, sort_controls_rect.y, 14, TEXT_COLOR);
 
-    const char *sort_options[] = {"Affected", "Damage", "Deaths", "Count", "Country"};
+    const char *sort_options[] = {"Affected", "Damage", "Deaths"};
 
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 3; i++) {
         Rectangle button_rect = {sort_controls_rect.x + 80 + i * 100, sort_controls_rect.y, 90, 25};
         Color button_color = (gui->current_sort_type == i) ? PRIMARY_COLOR : (Color){240, 240, 245, 255};
         Color text_color = (gui->current_sort_type == i) ? WHITE : TEXT_COLOR;
@@ -781,7 +756,7 @@ void DrawBarChart(Rectangle bounds, CountryStats *stats, int count, DisasterGUI 
     DrawRectangleRec(bounds, PANEL_COLOR);
     DrawRectangleLinesEx(bounds, 1, BORDER_COLOR);
 
-    const char *sort_names[] = {"Total Affected", "Total Damage", "Total Deaths", "Disaster Count", "Country Name"};
+    const char *sort_names[] = {"Total Affected", "Total Damage", "Total Deaths"};
     DrawText(TextFormat("Top Countries by %s", sort_names[gui->current_sort_type]),
              bounds.x + 10, bounds.y + 10, 16, TEXT_COLOR);
 
@@ -800,9 +775,6 @@ void DrawBarChart(Rectangle bounds, CountryStats *stats, int count, DisasterGUI 
             break;
         case SORT_BY_DEATHS:
             max_value = stats[0].total_deaths;
-            break;
-        case SORT_BY_COUNT:
-            max_value = stats[0].disaster_count;
             break;
         default:
             max_value = stats[0].total_affected;
@@ -828,9 +800,6 @@ void DrawBarChart(Rectangle bounds, CountryStats *stats, int count, DisasterGUI 
                 break;
             case SORT_BY_DEATHS:
                 current_value = stats[i].total_deaths;
-                break;
-            case SORT_BY_COUNT:
-                current_value = stats[i].disaster_count;
                 break;
             default:
                 current_value = stats[i].total_affected;
@@ -931,12 +900,6 @@ void DrawDetailedStatsPanel(Rectangle bounds, DisasterGUI *gui) {
     DrawText(TextFormat("Year Range: %d - %d", gui->start_year, gui->end_year),
              bounds.x + 20, bounds.y + y_offset, 12, (Color){100, 100, 100, 255});
     y_offset += line_height;
-
-    // Status de performance
-    const char *perf_text = gui->use_optimized_queries ?
-                           "High Performance Mode" : "Standard Mode";
-    Color perf_color = gui->use_optimized_queries ? SECONDARY_COLOR : ACCENT_COLOR;
-    DrawText(perf_text, bounds.x + 20, bounds.y + y_offset, 12, perf_color);
 }
 
 // Desenhar lista de tipos de desastre clicáveis
@@ -1458,9 +1421,9 @@ void LoadDataFromStarSchema(DisasterGUI *gui, DataWarehouse *dw) {
     printf("Tipos de desastre únicos extraídos: %d\n", gui->disaster_type_count);
 
     // Encontrar intervalo de anos para o slider duplo
-    int min_year = 9999, max_year = 0;
+    int min_year = INT_MAX, max_year = 0;
     for (int i = 0; i < gui->disaster_count; i++) {
-        if (gui->disasters[i].start_year > 0) {
+        if (gui->disasters[i].start_year >= 1900 && gui->disasters[i].start_year <= 2030) {
             if (gui->disasters[i].start_year < min_year) min_year = gui->disasters[i].start_year;
             if (gui->disasters[i].start_year > max_year) max_year = gui->disasters[i].start_year;
         }
@@ -1469,8 +1432,8 @@ void LoadDataFromStarSchema(DisasterGUI *gui, DataWarehouse *dw) {
     // Inicializar filtros
     gui->selected_country = 0;
     gui->selected_disaster_type = 0;
-    gui->min_year = min_year > 0 ? min_year : 1900;
-    gui->max_year = max_year > 0 ? max_year : 2025;
+    gui->min_year = (min_year != INT_MAX) ? min_year : 1900;
+    gui->max_year = (max_year > 0) ? max_year : 2025;
     gui->start_year = gui->min_year;
     gui->end_year = gui->max_year;
     gui->start_year_slider_active = false;
@@ -1523,7 +1486,7 @@ int load_and_convert_to_star_schema(const char *binary_filename, DataWarehouse *
         if (fread(&disaster, sizeof(OriginalDisaster), 1, file) == 1) {
             // Validar dados antes de converter
             if (strlen(disaster.country) > 0 && strlen(disaster.disaster_type) > 0 &&
-                disaster.start_year > 1900 && disaster.start_year < 2030) {
+                disaster.start_year >= 1900 && disaster.start_year < 2030) {
 
                 if (dw_convert_from_original(*dw, &disaster)) {
                     converted_count++;

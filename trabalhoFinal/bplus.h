@@ -13,7 +13,13 @@ void bplus_destroy(BPlusTree *tree);
 int bplus_insert(BPlusTree *tree, int key, long value);
 long* bplus_search(BPlusTree *tree, int key, int *count);
 
+// Nova função implementada: busca por intervalo
 long* bplus_search_range(BPlusTree *tree, int min_key, int max_key, int *count);
+
+// Função alternativa de busca por intervalo (implementação mais simples)
+long* bplus_search_range_simple(BPlusTree *tree, int min_key, int max_key, int *count);
+
+// Funções de estatísticas
 void bplus_print_statistics(BPlusTree *tree);
 
 // Funções de persistência
